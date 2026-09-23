@@ -208,14 +208,14 @@ test("release matrix packages both native macOS architectures", () => {
   assert.match(releaseWorkflowSource, /Merge macOS updater metadata[\s\S]*?ruby/);
 });
 
-test("macOS release signing is required on tag pushes", () => {
+test("macOS release signing is opt-in, and the unsigned lane stays secret-free", () => {
   assert.match(
     releaseWorkflowSource,
     /workflow_dispatch:\s+inputs:\s+sign_macos:[\s\S]*?default:\s*true[\s\S]*?type:\s*boolean/,
   );
   assert.ok(
     releaseWorkflowSource.includes(
-      "MACOS_SIGN_RELEASE: ${{ github.event_name != 'workflow_dispatch' || inputs.sign_macos == true }}",
+      "MACOS_SIGN_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_macos == true }}",
     ),
   );
 
