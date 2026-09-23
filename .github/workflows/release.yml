@@ -86,8 +86,13 @@ jobs:
     name: Build ${{ matrix.name }}
     needs: verify
     env:
-      # Tag pushes always sign. workflow_dispatch signs unless explicitly disabled.
-      MACOS_SIGN_RELEASE: ${{ github.event_name != 'workflow_dispatch' || inputs.sign_macos == true }}
+      # macOS packages are unsigned unless the operator opts in with a
+      # Tag pushes produce unsigned packages unless the operator opts in with a
+      # workflow_dispatch(sign_macos: true) run and the Apple secrets configured.
+      # An unsigned build is what lets a first release exist at all; it also keeps
+      # macOS users on right-click -> Open until signing is configured. See
+      # docs/spec/06-delivery/06-release-runbook.md.
+      MACOS_SIGN_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_macos == true }}
     strategy:
       fail-fast: false
       matrix:
