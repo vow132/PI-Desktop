@@ -30,8 +30,11 @@ test("the file view ships as an ordinary plugin, not a privileged one", () => {
   assert.equal(manifest.id, "pi.file-manager");
   assert.deepEqual(manifest.contributes.views.map((v) => v.id), ["manager"]);
   // Exactly the permissions a third party would have to declare for the same
+  // capability — nothing host-only. The two workspace.remote.* entries are
+  // what the same view needs to serve a paired remote host files instead of the
+  // local workspace (ADR 0303); without them the remote path is read-only.
   // capability — nothing host-only.
-  assert.deepEqual([...manifest.permissions].sort(), ["fs.read", "ui.view"]);
+  assert.deepEqual([...manifest.permissions].sort(), ["fs.read", "ui.view", "workspace.remote.read", "workspace.remote.write"]);
   assert.equal(manifest.fs.read.root, "workspace");
   assert.deepEqual(manifest.fs.read.scope, ["**"]);
   // A localized title, because the panel menu shows it to the user.
