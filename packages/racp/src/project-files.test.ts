@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RacpError } from "@pi-desktop/agent-host";
 import { createProjectFileService } from "../../host-runtime/src/project-files.js";
@@ -18,8 +19,7 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 async function fixture(port = true) {
-  if (!process.env.PI_SCRATCH_DIR) throw new Error("PI_SCRATCH_DIR required");
-  const root = await realpath(await mkdtemp(join(process.env.PI_SCRATCH_DIR, "racp-project-files-")));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "racp-project-files-")));
   dirs.push(root);
   await writeFile(join(root, "a.txt"), "initial");
   const files = createProjectFileService({ projectRoot: async (id) => { if (id !== "7") throw new RacpError("NOT_FOUND", "unknown project"); return root; } });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,8 +15,7 @@ const owner: Principal = { subject: "device-a", roles: ["owner"] };
 const dirs: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); vi.mocked(fs.open).mockReset(); await Promise.all(dirs.splice(0).map((path) => fs.rm(path, { recursive: true, force: true }))); });
 async function fixture(options: Partial<ProjectFileServiceOptions> = {}) {
-  if (!process.env.PI_SCRATCH_DIR) throw new Error("PI_SCRATCH_DIR is required for filesystem tests");
-  const root = await fs.realpath(await fs.mkdtemp(join(process.env.PI_SCRATCH_DIR, "project-files-")));
+  const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "project-files-")));
   dirs.push(root);
   const files = createProjectFileService({ projectRoot: async (id) => { if (id !== "7") throw new RacpError("NOT_FOUND", "project unknown"); return root; }, ...options });
   return { root, files };
