@@ -75,7 +75,9 @@ test("a plugin view counts as a tool, not a transcript resource", () => {
 });
 
 test("the blank page launcher renders plugin views from the data-driven list", () => {
-  assert.match(panelSource, /workPanelTools\(t, pluginViews\)/);
+  // The third argument only narrows the remote entries; the list is still
+  // derived from pluginViews rather than hard-coded per plugin.
+  assert.match(panelSource, /workPanelTools\(t, pluginViews, activeSessionIsRemote\)/);
   assert.match(panelSource, /panel\.toolsAndPanels/);
   assert.match(panelSource, /pluginViews\.map\(\(view\) =>/);
   // Rows carry the same affordances as the host-owned Review row, so a plugin
