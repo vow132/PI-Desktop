@@ -1,5 +1,6 @@
 import { mkdtemp, realpath, rm, writeFile, readFile, mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,8 +10,7 @@ import { createHostOperations } from "./host-operations.js";
 
 const dirs: string[] = [];
 function scratchDir(): string {
-  if (!process.env.PI_SCRATCH_DIR) throw new Error("PI_SCRATCH_DIR required");
-  return process.env.PI_SCRATCH_DIR;
+  return process.env.PI_SCRATCH_DIR ?? tmpdir();
 }
 afterEach(async () => {
   vi.unstubAllEnvs();
