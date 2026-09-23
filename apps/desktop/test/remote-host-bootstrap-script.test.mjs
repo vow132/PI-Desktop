@@ -249,7 +249,8 @@ test("the generated script installs, starts, and prints the ready/pairing lines"
       version: VERSION,
     });
     assert.deepEqual(parsed.pairing, { token: "ppt1.stub", expiresAt: 1_893_456_000_000 });
-    assert.deepEqual(parsed.steps, ["download", "verify", "install", "start", "await-ready", "ok"]);
+      // stop-previous runs before install so the old host binary is not in use.
+  assert.deepEqual(parsed.steps, ["download", "verify", "stop-previous", "install", "start", "await-ready", "ok"]);
 
     // The host was started under the sandbox HOME and left running there.
     const pid = (await readFile(join(sandbox.home, WORK_SUBDIR, "pi-host.pid"), "utf8")).trim();
