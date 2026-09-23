@@ -4,6 +4,9 @@ import type {
   FsReadResult,
   RacpProjectSummary,
   WorkspaceDiff,
+  ProjectFilesInputs,
+  ProjectFilesResults,
+  ProjectFilesMethod,
 } from "@pi-desktop/shared";
 
 /**
@@ -57,6 +60,11 @@ export interface RacpWorkspaceAccess {
   diff(sessionId: string): Promise<WorkspaceDiff>;
 }
 
+/** No arbitrary roots or generic filesystem/tool RPC. Mutations require an owner. */
+export type RacpProjectFilesAccess = {
+  [K in ProjectFilesMethod]: (input: ProjectFilesInputs[K], principal?: Principal) => Promise<ProjectFilesResults[K]>;
+};
+
 export type TerminalOpenResult = {
   terminalId: string;
   /** Bounded replay ring, base64 (spec §6.2). */
@@ -83,6 +91,7 @@ export type RacpHostOperations = {
   sessions: RacpSessionCatalog;
   projects: RacpProjectCatalog;
   workspace: RacpWorkspaceAccess;
+  files?: RacpProjectFilesAccess;
   terminal?: RacpTerminalAccess;
   /** Owner-only: revoke a paired device (spec `session/revoke`). */
   revokeDevice?: (deviceId: string) => Promise<boolean>;

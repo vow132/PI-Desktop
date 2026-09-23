@@ -141,6 +141,29 @@ sha256_of() {
 actual_sha256=$(sha256_of "$tarball") || die "missing-sha256-tool"
 [ "$actual_sha256" = "$EXPECTED_SHA256" ] || die "checksum-mismatch"
 
+stop_pi_host() {
+  [ -f "$pidfile" ] || return 0
+  previous=$(cat "$pidfile" 2>/dev/null || true)
+  [ -n "$previous" ] || return 0
+  kill -0 "$previous" 2>/dev/null || return 0
+  # The pidfile is never removed, so a recycled PID could name an unrelated
+  # process owned by the same user. Only signal it when it is still our
+  # pi-host; anything else is left alone.
+  ps -p "$previous" -o command= 2>/dev/null | grep -q 'pi-host.js' || return 0
+  kill "$previous" 2>/dev/null || true
+  waited=0
+  while kill -0 "$previous" 2>/dev/null && [ "$waited" -lt 10 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+# A running pi-host keeps its own executable open, so replacing the file it
+# was started from fails with ETXTBSY (Text file busy). Stop the previous
+# host before the install copies anything, not after.
+step "stop-previous"
+stop_pi_host || true
+
 # --- install under the user's home ----------------------------------------
 step "install"
 unpack="$work/unpack"
@@ -150,28 +173,12 @@ tar -xzf "$tarball" -C "$unpack" || die "extract-failed"
 [ -d "$unpack/$BUNDLE_DIR" ] || die "unexpected-archive-layout"
 sh "$unpack/$BUNDLE_DIR/install.sh" >/dev/null || die "install-failed"
 
-# --- (re)start on loopback with a fresh pairing token ----------------------
+# --- start on loopback with a fresh pairing token ------------------------
 step "start"
-if [ -f "$pidfile" ]; then
-  previous=$(cat "$pidfile" 2>/dev/null || true)
-  # The pidfile is never removed, so a recycled PID could name an unrelated
-  # process owned by the same user. Only signal it when it is still our
-  # pi-host; anything else is left alone.
-  if [ -n "$previous" ] && kill -0 "$previous" 2>/dev/null && \\
-     ps -p "$previous" -o command= 2>/dev/null | grep -q 'pi-host.js'; then
-    kill "$previous" 2>/dev/null || true
-    waited=0
-    while kill -0 "$previous" 2>/dev/null && [ "$waited" -lt 10 ]; do
-      sleep 1
-      waited=$((waited + 1))
-    done
-  fi
-fi
-
-nohup node "$HOME/.pi-desktop/pi-host/current/pi-host.js" \\
-  --port "$PORT" \\
-  --pair \\
-  --pairing-lifetime-ms "$PAIRING_LIFETIME_MS" \\
+nohup node "$HOME/.pi-desktop/pi-host/current/pi-host.js" \
+  --port "$PORT" \
+  --pair \
+  --pairing-lifetime-ms "$PAIRING_LIFETIME_MS" \
   >"$log" 2>"$err" </dev/null &
 host_pid=$!
 printf '%s\\n' "$host_pid" > "$pidfile"

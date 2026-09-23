@@ -21,6 +21,8 @@ import type {
   PluginViewMeta,
   ProjectWorkspace,
   ProviderPublic,
+  RemoteHostSummary,
+  RemoteProjectSummary,
   ReviewRollbackResult,
   SessionSummary,
   SessionThinkingLevel,
@@ -40,6 +42,8 @@ import type {
   QueuedPromptDirection,
   QueuedPrompts,
 } from "../lib/queued-prompts";
+import type { RemoteBrowseState, RemoteWizardState } from "./slices/remote-slice";
+import type { RemoteWizardStep } from "./slices/remote-slice";
 import type { SubagentPanelSelection } from "../lib/subagent-panel";
 import type {
   ComposerDraftSnapshot,
@@ -115,6 +119,8 @@ export type AppState = {
   openProjects: ProjectWorkspace[];
   openProjectPaths: string[];
   createProjectDialogOpen: boolean;
+  /** The project section's source menu (打开文件夹 / 远程连接). */
+  projectSourceMenuOpen: boolean;
   activeProjectPath?: string;
   projectMeta: Record<string, ProjectMeta>;
   /** Kept as a flat map for lightweight consumers (Sidebar). */
@@ -243,6 +249,9 @@ export type AppState = {
   abort: () => Promise<void>;
   openProject: () => Promise<void>;
   closeProjectDialog: () => void;
+  /** Open / close the project section's source menu (打开文件夹 / 远程连接). */
+  openProjectSourceMenu: () => void;
+  closeProjectSourceMenu: () => void;
   createProjectFromFolders: (input: {
     name: string;
     folders: string[];
@@ -355,6 +364,35 @@ export type AppState = {
   /** Toggle the selected subagent detail. */
   toggleSubagentPanel: (delegationId: string) => void;
   closeSubagentPanel: () => void;
+
+  // --- Remote workspace ----------------------------------------------------
+  /** Redacted paired hosts and all remembered remote project registrations. */
+  remoteHosts: RemoteHostSummary[];
+  remoteProjects: RemoteProjectSummary[];
+  activeRemoteProjectId: string | null;
+  remoteProjectErrors: Record<string, string>;
+  remoteProjectPending: Record<string, boolean>;
+  /** Directory listing behind the remote folder picker. */
+  remoteBrowse: RemoteBrowseState;
+  /** The remote connection wizard opened from the project menu. */
+  remoteWizard: RemoteWizardState;
+  browseRemoteDirectory: (hostKey: string, path?: string) => Promise<void>;
+  loadRemoteHosts: () => Promise<void>;
+  loadRemoteProjects: (hostKey?: string) => Promise<RemoteProjectSummary[]>;
+  selectRemoteProject: (id: string) => Promise<void>;
+  newRemoteProjectSession: (id: string, options?: NavigationOptions) => Promise<void>;
+  removeRemoteProject: (id: string) => Promise<void>;
+  openRemoteWizard: (hostKey?: string) => void;
+  goToRemoteWizardStep: (step: RemoteWizardStep) => void;
+  setRemoteWizardField: (
+    field: "label" | "host" | "port" | "user" | "secret" | "auth" | "name",
+    value: string,
+  ) => void;
+  connectRemoteWizard: () => Promise<boolean>;
+  selectRemoteWizardHost: (hostKey: string) => void;
+  selectRemoteWizardPath: (path: string, name: string) => void;
+  submitRemoteWizard: () => Promise<RemoteProjectSummary | null>;
+  closeRemoteWizard: () => void;
   /** Abort one session's running turn, visible or not. */
   abortSession: (sessionId: string) => Promise<void>;
   openWorkPanel: () => void;

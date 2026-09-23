@@ -24,13 +24,19 @@ import {
   type RemoteHostPairResult,
   type RemoteHostRemoveRequest,
   type RemoteHostSummary,
+  type RemoteProjectSummary,
+  type RemoteSessionCreateRequest,
 } from "@pi-desktop/shared";
 import { app } from "electron";
 import {
   getActiveRemoteHostsBoot,
   type RemoteHostsBoot,
-} from "../bootstrap/remote-hosts";
-import { exchangePairingToken } from "../remote/racp-remote-host-client";
+  type RemoteBrowseResult,
+  type RemoteSessionRow,
+} from "../bootstrap/remote-hosts.js";
+import { exchangePairingToken } from "../remote/racp-remote-host-client.js";
+import { parseRemoteSessionId } from "../remote/backend-router.js";
+import type { RemoteTerminalManager, RemoteTerminalOpenResult } from "../remote/remote-terminal.js";
 import type { IpcRegistrar } from "./types";
 
 export type RegisterRemoteHostIpcOptions = {
@@ -70,7 +76,37 @@ function invalid(message: string, field?: string): Error {
  * supply one. The URL's hostname keeps the key readable in logs; the label's
  * ASCII-safe slug disambiguates two hosts on the same machine (e.g., a WSL
  * and a native install of `pi-host` on `localhost`).
+/**
+ * Host key of a namespaced remote session id, or null when the id is not one.
+ * A terminal call names its host through the session it belongs to, so the
+ * renderer can never address a host it did not name.
  */
+function remoteSessionHostKey(sessionId: string): string | null {
+  if (!sessionId) return null;
+  return parseRemoteSessionId(sessionId)?.hostKey ?? null;
+}
+
+/** Geometry is clamped here, so the host's own bounds are never the last word. */
+function clampGeometry(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(1000, Math.floor(value)));
+}
+
+/**
+ * Resolve a `terminalId` to the manager that owns it. Terminal ids are host
+ * -scoped, so every live host is asked rather than trusting the caller; a
+ * value no host knows is `AGENT_UNAVAILABLE`, never a silent no-op.
+ */
+function requireTerminal(boot: RemoteHostsBoot, terminalId: string): RemoteTerminalManager {
+  if (!terminalId) throw invalid("terminalId is required", "terminalId");
+  const manager = boot.terminalForId(terminalId);
+  if (!manager) {
+    throw Object.assign(new Error("terminal is not open on any remote host"), {
+      errorCode: ErrorCodes.AGENT_UNAVAILABLE,
+    });
+  }
+  return manager;
+}
 function synthesizeHostKey(url: string, label: string): string {
   let hostname = "host";
   try {
@@ -94,6 +130,140 @@ export function registerRemoteHostIpc(options: RegisterRemoteHostIpcOptions): vo
     options.clientInfo ?? { name: app.getName(), version: app.getVersion() };
   const log = options.log ?? (() => undefined);
 
+  registrar.handle(
+    IPC.invoke.remoteHostBrowse,
+    async (request: { hostKey?: string; path?: string }): Promise<RemoteBrowseResult> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const hostKey = trim(request?.hostKey);
+      if (!hostKey) throw invalid("hostKey is required", "hostKey");
+      // A relative path is meaningless on the remote machine: the host's
+      // browse canonicalizes what it is given, and `..` is how a caller would
+      // otherwise try to walk out of the user's home.
+      const path = trim(request?.path);
+      if (path && !path.startsWith("/")) {
+        throw invalid("path must be absolute on the remote host", "path");
+      }
+      return boot.browse(hostKey, path || undefined);
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteHostProjectList,
+    async (request?: { hostKey?: string }): Promise<{ projects: RemoteProjectSummary[] }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const hostKey = trim(request?.hostKey);
+      return { projects: await boot.listProjects(hostKey || undefined) };
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteHostProjectRegister,
+    async (
+      request: { hostKey?: string; path?: string; name?: string },
+    ): Promise<{ project: RemoteProjectSummary }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const hostKey = trim(request?.hostKey);
+      if (!hostKey) throw invalid("hostKey is required", "hostKey");
+      const path = trim(request?.path);
+      if (!path.startsWith("/")) {
+        throw invalid("path must be absolute on the remote host", "path");
+      }
+      return { project: await boot.registerProject(hostKey, { path, name: request?.name }) };
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteHostProjectRemove,
+    async (request: { id?: string }): Promise<{ ok: true }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const id = trim(request?.id);
+      if (!id) throw invalid("id is required", "id");
+      await boot.removeProject(id);
+      return { ok: true };
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteHostSessionList,
+    async (request: { hostKey?: string }): Promise<{ sessions: RemoteSessionRow[] }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const hostKey = trim(request?.hostKey);
+      if (!hostKey) throw invalid("hostKey is required", "hostKey");
+      return { sessions: await boot.listSessions(hostKey) };
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteHostSessionCreate,
+    async (request: RemoteSessionCreateRequest): Promise<{ session: RemoteSessionRow }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const hostKey = trim(request?.hostKey);
+      if (!hostKey) throw invalid("hostKey is required", "hostKey");
+      const projectId = trim(request?.projectId);
+      if (!projectId) throw invalid("projectId is required", "projectId");
+      return { session: await boot.createSession(hostKey, { ...request, projectId }) };
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteTerminalOpen,
+    async (request: {
+      sessionId?: string;
+      cols?: number;
+      rows?: number;
+      terminalId?: string;
+    }): Promise<RemoteTerminalOpenResult> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const sessionId = trim(request?.sessionId);
+      const hostKey = remoteSessionHostKey(sessionId);
+      if (!hostKey) throw invalid("sessionId must name a remote session", "sessionId");
+      const terminal = boot.terminal(hostKey);
+      if (!terminal) {
+        throw Object.assign(new Error(`remote host ${hostKey} is not connected`), {
+          errorCode: ErrorCodes.AGENT_UNAVAILABLE,
+        });
+      }
+      return terminal.open(sessionId, {
+        cols: clampGeometry(request?.cols, 80),
+        rows: clampGeometry(request?.rows, 24),
+        ...(trim(request?.terminalId) ? { terminalId: trim(request.terminalId) } : {}),
+      });
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteTerminalInput,
+    async (request: { terminalId?: string; data?: string }): Promise<{ ok: true }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const terminal = requireTerminal(boot, trim(request?.terminalId));
+      await terminal.input(trim(request?.terminalId), String(request?.data ?? ""));
+      return { ok: true };
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteTerminalResize,
+    async (request: { terminalId?: string; cols?: number; rows?: number }): Promise<{ ok: true }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const terminal = requireTerminal(boot, trim(request?.terminalId));
+      await terminal.resize(
+        trim(request?.terminalId),
+        clampGeometry(request?.cols, 80),
+        clampGeometry(request?.rows, 24),
+      );
+      return { ok: true };
+    },
+  );
+
+  registrar.handle(
+    IPC.invoke.remoteTerminalClose,
+    async (request: { terminalId?: string }): Promise<{ ok: true }> => {
+      const boot = requireBoot(getRemoteHostsBoot());
+      const terminal = requireTerminal(boot, trim(request?.terminalId));
+      await terminal.close(trim(request?.terminalId));
+      return { ok: true };
+    },
+  );
   registrar.handle(
     IPC.invoke.remoteHostList,
     async (): Promise<{ hosts: RemoteHostSummary[] }> => {

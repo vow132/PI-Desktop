@@ -11,9 +11,9 @@
  * Two properties matter, and both are structural rather than conventional:
  *
  * - The secret is not an argument and not an environment variable. It lives in
- *   a `0600` file inside a `0700` directory, and the helper reads it by path, so
- *   a process listing (`ps`) never shows it and neither does a crash dump of
- *   the argv.
+ *   a `0600` file inside a `0700` directory (a verified current-user-only DACL
+ *   on Windows), and the helper reads it by path, so a process listing (`ps`)
+ *   never shows it and neither does a crash dump of the argv.
  * - The material is created lazily, only when an `ssh` child is about to
  *   authenticate, and deleted again as soon as that child is done with it —
  *   for a forward, that is the moment the port is up. Nothing keeps the file
@@ -25,8 +25,12 @@
  */
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { ErrorCodes } from "@pi-desktop/shared";
+import {
+  protectWindowsAskpassDirectory,
+  windowsAskpassCommand,
+} from "./ssh-askpass-windows.js";
 
 /** Environment variable naming the file the helper reads the secret from. */
 export const ASKPASS_SECRET_ENV = "PI_SSH_ASKPASS_SECRET";
@@ -55,6 +59,21 @@ function fail(message: string, errorCode: string, data?: Record<string, unknown>
   return Object.assign(new Error(message), { errorCode, ...(data ?? {}) });
 }
 
+async function removeCredentialDirectory(directory: string): Promise<void> {
+  try {
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    // File-system errors can include credential paths; retain only a stable,
+    // actionable cleanup diagnosis, not the raw error or a child-process cause.
+    throw fail(
+      "Could not remove temporary SSH password material. Close processes holding temporary files " +
+        "and retry cleanup; protected credential files may remain until cleanup succeeds.",
+      ErrorCodes.HOST_BOOTSTRAP_FAILED,
+      { code: "SSH_ASKPASS_CLEANUP_FAILED", cleanupFailed: true },
+    );
+  }
+}
+
 /** Validate a supplied login password; returns it unchanged. */
 export function assertSshPassword(value: unknown, field = "password"): string {
   if (typeof value !== "string") {
@@ -73,6 +92,10 @@ export function assertSshPassword(value: unknown, field = "password"): string {
     // break, so anything after one would be silently dropped.
     throw fail(`${field} must not contain a line break`, ErrorCodes.INVALID_ARGUMENT, { field });
   }
+  if (value.includes("\0")) {
+    // OpenSSH consumes a C string; an embedded NUL would silently truncate it.
+    throw fail(`${field} must not contain a NUL character`, ErrorCodes.INVALID_ARGUMENT, { field });
+  }
   return value;
 }
 
@@ -89,58 +112,58 @@ export type SshAskpassOptions = {
   dir?: string;
   /** Injected for tests; defaults to `process.platform`. */
   platform?: NodeJS.Platform;
+  /** Internal test seam; production always applies and verifies the native ACL. */
+  protectWindowsDirectory?: (directory: string) => Promise<void>;
 };
 
-/**
- * Write the secret and the helper to a throwaway directory.
- *
- * Windows is refused rather than half-supported: its OpenSSH build cannot
- * execute a shell-script askpass helper, and shipping a helper executable is a
- * project of its own. The caller surfaces this as a bootstrap failure naming
- * the remedy (use a key or the agent), which is better than an authentication
- * error the user cannot act on.
- */
+/** Write a platform-native helper and its secret into a private throwaway directory. */
 export async function createSshAskpass(
   secret: unknown,
   options: SshAskpassOptions = {},
 ): Promise<SshAskpassMaterial> {
   const password = assertSshPassword(secret);
   const platform = options.platform ?? process.platform;
-  if (platform === "win32") {
-    throw fail(
-      "password authentication is not supported by OpenSSH on Windows; use an SSH key or agent",
-      ErrorCodes.HOST_BOOTSTRAP_FAILED,
-      { platform },
-    );
-  }
-
-  // `mkdtemp` already creates the directory `0700`; the explicit chmod
-  // documents that the secret's confidentiality rests on this mode rather than
-  // on the inherited umask.
-  const dir = await mkdtemp(join(options.dir ?? tmpdir(), "pi-ssh-askpass-"));
-  await chmod(dir, 0o700);
+  const windows = platform === "win32";
+  const parent = options.dir ?? tmpdir();
+  const dir = await mkdtemp(join(windows ? resolve(parent) : parent, "pi-ssh-askpass-"));
   const secretPath = join(dir, "secret");
   const helperPath = join(dir, "askpass.sh");
+  let executable = helperPath;
   try {
-    await writeFile(secretPath, password, { mode: 0o600 });
-    await writeFile(helperPath, ASKPASS_HELPER_SCRIPT, { mode: 0o700 });
+    if (windows) {
+      // `mode`/chmod do not protect Windows credentials. Verify the DACL while
+      // the directory is still empty, and fail closed before writing a secret.
+      await (options.protectWindowsDirectory ?? protectWindowsAskpassDirectory)(dir);
+    } else {
+      // `mkdtemp` creates 0700; make the POSIX confidentiality boundary explicit.
+      await chmod(dir, 0o700);
+    }
+    await writeFile(secretPath, windows ? `${password}\n` : password, { mode: 0o600, flag: "wx" });
+    if (windows) {
+      executable = await windowsAskpassCommand();
+    } else {
+      await writeFile(helperPath, ASKPASS_HELPER_SCRIPT, { mode: 0o700, flag: "wx" });
+    }
   } catch (error) {
     // A half-written credential is still a credential; do not leave it behind.
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    await removeCredentialDirectory(dir);
     throw error;
   }
-  let disposed = false;
+  let disposal: Promise<void> | undefined;
   return {
     env: {
-      SSH_ASKPASS: helperPath,
+      SSH_ASKPASS: executable,
       SSH_ASKPASS_REQUIRE: "force",
       DISPLAY: process.env.DISPLAY ?? ":0",
       [ASKPASS_SECRET_ENV]: secretPath,
+      ...(windows ? { ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "", NODE_PATH: "" } : {}),
     },
     async dispose() {
-      if (disposed) return;
-      disposed = true;
-      await rm(dir, { recursive: true, force: true });
+      disposal ??= removeCredentialDirectory(dir).catch((error: unknown) => {
+        disposal = undefined;
+        throw error;
+      });
+      await disposal;
     },
   };
 }

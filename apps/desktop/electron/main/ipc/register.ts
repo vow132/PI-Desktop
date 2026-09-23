@@ -26,6 +26,7 @@ import { registerConfigSyncIpc } from "./config-sync-ipc";
 import { registerSkillsIpc } from "./skills-ipc";
 import { registerAgentImportIpc } from "./agent-import-ipc";
 import { registerRemoteHostIpc } from "./remote-host-ipc";
+import { getActiveRemoteHostsBoot, type RemoteSessionRow } from "../bootstrap/remote-hosts";
 import { fetchSkillMarketDocument, searchSkillMarket } from "../skill-market-catalog";
 import { registerWindowIpc } from "./window-ipc";
 import { createComposerTemplateLoader, registerWorkspaceIpc } from "./workspace-ipc";
@@ -245,6 +246,20 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     enrichSession,
     acquireSessionOperation,
     stripWinLongPrefix,
+    // Merges each paired host's sessions into `session/list` so every listing
+    // surface sees one list. The boot singleton is read lazily: a call that
+    // races startup reads "no remote hosts yet", which is what an empty
+    // registry produced before remote sessions existed.
+    remoteSessions: async () => {
+      const boot = getActiveRemoteHostsBoot();
+      if (!boot) return [];
+      const rows: RemoteSessionRow[] = [];
+      for (const host of await boot.list()) {
+        if (!host.connected) continue;
+        rows.push(...(await boot.listSessions(host.hostKey).catch(() => [])));
+      }
+      return rows;
+    },
   });
   registerSettingsIpc({
     registrar,

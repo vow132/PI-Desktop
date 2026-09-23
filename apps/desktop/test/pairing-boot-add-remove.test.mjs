@@ -54,10 +54,13 @@ function fakeSession(id) {
 /** A fake adapter mirroring `RacpRemoteHostClient` — enough surface for the
  * boot layer to build one host from a record. Tracks connection state so a
  * test can assert on `closeHost`. */
-function fakeAdapter({ sessions = [], failConnect } = {}) {
+function fakeAdapter({ sessions = [], failConnect, initializeResult } = {}) {
   const listeners = new Set();
   return {
     state: "disconnected",
+    // The boot layer reads the host's negotiated capabilities and version
+    // here, mirroring the real adapter's accessor.
+    initialized: () => initializeResult ?? null,
     async connect() {
       if (failConnect) throw failConnect;
       this.state = "connected";
@@ -219,17 +222,22 @@ test("list surface strips device tokens even when the record is on disk", async 
     deviceToken: "device-secret",
   });
   const listed = await boot.list();
-  // The summary shape has exactly these five fields: the four the pairing UX
-  // has always shown, plus the transport marker the SSH bootstrap added. A
-  // record with no metadata is a direct host, so the marker defaults there.
+  // The summary shape has exactly these fields: the four the pairing UX has
+  // always shown, the transport marker the SSH bootstrap added, and the two
+  // the remote workspace added — what the host negotiated in
+  // `connection/initialize` (absent handshake reads as "nothing available")
+  // and its own release version.
   assert.deepEqual(Object.keys(listed[0]).sort(), [
+    "capabilities",
     "connected",
     "hostKey",
     "label",
     "transport",
     "url",
+    "version",
   ]);
   assert.equal(listed[0].transport, "direct");
+  assert.deepEqual(listed[0].capabilities, { terminal: false, workspace: false });
   await boot.closeAll();
   await cleanup();
 });

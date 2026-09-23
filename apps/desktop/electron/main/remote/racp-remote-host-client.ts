@@ -17,7 +17,7 @@ import {
   type ClientTransportFactory,
   type RacpClientState,
 } from "@pi-desktop/racp";
-import { ErrorCodes, type RacpEventEnvelope } from "@pi-desktop/shared";
+import { ErrorCodes, type RacpEventEnvelope, type RacpInitializeResult } from "@pi-desktop/shared";
 import type { RemoteHostClient } from "./remote-host-connection.js";
 
 export type PairingExchangeOptions = {
@@ -83,6 +83,13 @@ export type RacpRemoteHostClient = {
   readonly client: RemoteHostClient;
   /** Underlying RACP client state, for boot diagnostics and the future host card. */
   readonly state: () => RacpClientState;
+  /**
+   * What the host answered to `connection/initialize`: its capabilities, its
+   * own release version, and the roles this device was granted. Null until
+   * the handshake completes, and after a close. Capability-gated UI reads
+   * this instead of probing an operation the host may refuse.
+   */
+  readonly initialized: () => RacpInitializeResult | null;
   /** Open the transport and initialize the RACP session. */
   connect(): Promise<void>;
   /** Close the transport; safe to call before {@link connect} and after failure. */
@@ -127,6 +134,7 @@ export function createRacpRemoteHostClient(
   return {
     client,
     state: () => racp.state,
+    initialized: () => racp.initialized,
     async connect() {
       await racp.connect();
     },

@@ -44,6 +44,7 @@ export type DurableProjectGroup = {
 };
 
 export type SessionIndexRecord = {
+  source?: import("@pi-desktop/shared").SessionSource;
   id: string;
   title: string;
   projectPath?: string | null;
@@ -109,9 +110,10 @@ export function sessionMatchesQuery(
 }
 
 export function sessionMatchesIndexProject(
-  session: Pick<SessionIndexRecord, "projectPath">,
+  session: Pick<SessionIndexRecord, "projectPath" | "source">,
   project: Pick<ProjectIndexItem, "roots" | "path">,
 ) {
+  if (session.source === "remote") return false;
   const sessionPath = normalizeProjectPath(session.projectPath);
   return Boolean(
     sessionPath &&

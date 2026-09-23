@@ -21,13 +21,17 @@
 import type {
   RemoteHostBootstrapRequest,
   RemoteHostBootstrapResult,
+  RemoteHostCapabilities,
+  RemoteHostSessionRow,
   RemoteHostSshMetadata,
   RemoteHostSummary,
   RemoteHostTransport,
+  RemoteProjectSummary,
 } from "@pi-desktop/shared";
 import { assertSshArgument } from "../remote/ssh-transport.js";
 import { wsClientTransport } from "@pi-desktop/racp";
 import type { BackendRouter } from "../remote/backend-router.js";
+import { makeRemoteSessionId } from "../remote/backend-router.js";
 import { createRacpRemoteHostClient, exchangePairingToken, type RacpRemoteHostClient } from "../remote/racp-remote-host-client.js";
 import {
   createSshBootstrap,
@@ -44,8 +48,27 @@ import {
   type RemoteHostRecord,
   type RemoteHostRegistry,
 } from "../remote/remote-host-registry.js";
+import {
+  createRemoteProjectRegistry,
+  type RemoteProjectRegistry,
+  type RemoteProjectEncryptionPort,
+} from "../remote/remote-projects.js";
+import {
+  createRemoteTerminalManager,
+  type RemoteTerminalManager,
+  type RemoteTerminalOpenResult,
+} from "../remote/remote-terminal.js";
+
+import { createRemoteProjectService, type RemoteFileOperation } from "../remote/remote-project-service.js";
 
 export type RemoteHostAdapterFactory = (record: RemoteHostRecord) => RacpRemoteHostClient;
+
+/** One directory listing, as the remote folder picker consumes it. */
+export type RemoteBrowseResult = {
+  path: string;
+  parent?: string;
+  entries: Array<{ name: string; path: string }>;
+};
 
 export type BootRemoteHostsOptions = {
   dataDir: string;
@@ -61,7 +84,10 @@ export type BootRemoteHostsOptions = {
   tunnels?: SshTunnelManager;
   /** Overrides for the SSH bootstrap's injected edges (tests only). */
   sshBootstrap?: Partial<SshBootstrapDeps>;
+  /** Test seam for the remote-project registry. */
+  projects?: RemoteProjectRegistry;
 };
+
 
 export type { RemoteHostSummary };
 
@@ -83,9 +109,59 @@ export interface RemoteHostsBoot {
   bootstrapHost(request: RemoteHostBootstrapRequest): Promise<RemoteHostBootstrapResult>;
   /** Close and unregister the host, then remove it from the registry. */
   removeHost(hostKey: string): Promise<void>;
+  /**
+   * List the directories under a remote path, for the remote folder picker.
+   * Forwarded as the owner-only `project/browse`; the host applies its own
+   * bounds, hidden-name filter, and entry cap.
+   */
+  browse(hostKey: string, path?: string): Promise<RemoteBrowseResult>;
+  /**
+   * Projects of one host. The host's `project/list` row carries no path, so
+   * the desktop's remembered projection fills it in — and keeps the host
+   * listed while it is offline.
+   */
+  listProjects(hostKey?: string): Promise<RemoteProjectSummary[]>;
+  getProject(id: string): RemoteProjectSummary | undefined;
+  fileOperation(id: string, operation: RemoteFileOperation, payload: Record<string, unknown>): Promise<unknown>;
+  /** Register a remote directory as a project on the host and remember it. */
+  registerProject(
+    hostKey: string,
+    input: { path: string; name?: string },
+  ): Promise<RemoteProjectSummary>;
+  /** Forget only the desktop registration; never delete remote files. */
+  removeProject(id: string): Promise<void>;
+  /** Sessions of one host, as the merged desktop session list renders them. */
+  listSessions(hostKey: string): Promise<RemoteSessionRow[]>;
+  createSession(
+    hostKey: string,
+    input: {
+      projectId: string;
+      title?: string;
+      mode?: string;
+      permissionMode?: string;
+      providerId?: string;
+      modelId?: string;
+      thinkingLevel?: string;
+    },
+  ): Promise<RemoteSessionRow>;
+  /** The terminal manager of a live host, or null when it is not connected. */
+  terminal(hostKey: string): RemoteTerminalManager | null;
+  /**
+   * The terminal manager that owns `terminalId`, or null when no live host
+   * has it open. Input and resize carry only the terminal id, so the host is
+   * resolved from it rather than trusted from the caller.
+   */
+  terminalForId(terminalId: string): RemoteTerminalManager | null;
   /** The underlying registry, exposed for pairing flows that write directly. */
   readonly registry: RemoteHostRegistry;
-}
+};
+
+/**
+ * One remote session as the renderer's session list consumes it. The shape
+ * lives in `@pi-desktop/shared` so main and the renderer cannot drift on a
+ * field the router resolves on the way through.
+ */
+export type RemoteSessionRow = RemoteHostSessionRow;
 
 /**
  * Single-slot registry so `bootstrap/shutdown.ts` can wait on the same boot
@@ -206,6 +282,12 @@ type OpenHost = {
   connection: RemoteHostConnection;
   /** The URL this host is live on, which for an SSH host is the forward's. */
   url: string;
+  /** Terminals of this host; created with the connection, dropped with it. */
+  terminal: RemoteTerminalManager;
+  /** What `connection/initialize` negotiated, for capability-gated UI. */
+  capabilities: RemoteHostCapabilities;
+  /** The host's own release version, or "" when it did not report one. */
+  version: string;
 };
 
 export function createRemoteHostsBoot(
@@ -230,6 +312,17 @@ export function createRemoteHostsBoot(
   const tunnels =
     options.tunnels ??
     createSshTunnelManager({ log: (level, message, data) => log(level, message, data) });
+
+  const projects: RemoteProjectRegistry =
+    options.projects ??
+    createRemoteProjectRegistry({
+      dataDir: options.dataDir,
+      // The same `safeStorage` port the host registry uses: a remote project
+      // row is not a secret, so a host without a keychain still records it in
+      // plaintext rather than failing the feature.
+      encryption: options.encryption as RemoteProjectEncryptionPort,
+      log: (level, message, data) => log(level, message, data),
+    });
 
   const bootstrap = createSshBootstrap({
     version: options.clientInfo.version,
@@ -275,7 +368,26 @@ export function createRemoteHostsBoot(
         await adapter.close().catch(() => undefined);
         throw error;
       }
-      return { hostKey: record.hostKey, adapter, connection, url };
+      const terminal = createRemoteTerminalManager({
+        hostKey: record.hostKey,
+        // The manager only needs the request surface and the raw event
+        // stream, both of which the adapter's client already exposes.
+        client: {
+          request: (method, params) => adapter.client.request(method, params),
+          subscribe: (listener) => adapter.client.subscribe(listener),
+        },
+        emit: options.emit,
+        log: (level, message, data) => log(level, message, data),
+      });
+      return {
+        hostKey: record.hostKey,
+        adapter,
+        connection,
+        url,
+        terminal,
+        capabilities: capabilitiesOf(adapter),
+        version: versionOf(adapter),
+      };
     } catch (error) {
       // The host is not online, so nothing needs this forward; drop it rather
       // than leave an idle ssh process behind.
@@ -285,6 +397,9 @@ export function createRemoteHostsBoot(
   };
 
   const closeHost = async (host: OpenHost): Promise<void> => {
+    // Terminals first: they own the only renderer-facing listeners this host
+    // has, and a live listener after close would keep writing to a dead pipe.
+    host.terminal.closeAll();
     try {
       await host.connection.close();
     } catch (error) {
@@ -314,8 +429,41 @@ export function createRemoteHostsBoot(
     if (host) await closeHost(host);
   };
 
+  /**
+   * The live host for `hostKey`, or `AGENT_UNAVAILABLE` when it is not
+   * connected. Every remote operation below needs a live connection, and a
+   * typed failure lets the caller tell "host offline" from a host-side
+   * rejection.
+   */
+  const requireLive = (hostKey: string): OpenHost => {
+    const host = opened.find((candidate) => candidate.hostKey === hostKey);
+    if (!host) {
+      throw Object.assign(
+        new Error(`remote host ${hostKey} is not connected`),
+        { errorCode: "AGENT_UNAVAILABLE" },
+      );
+    }
+    return host;
+  };
   const isConnected = (hostKey: string): boolean =>
     opened.some((host) => host.hostKey === hostKey);
+  /**
+   * Capabilities the host negotiated, or an all-false row before it reports.
+   * `workspace` is derived from the remote-host profile rather than a flag of
+   * its own, because `workspace/list|read|diff` are part of that profile.
+   */
+  const capabilitiesOf = (adapter: RacpRemoteHostClient): RemoteHostCapabilities => {
+    const capabilities = adapter.initialized()?.capabilities;
+    return {
+      terminal: capabilities?.terminal === true,
+      workspace: capabilities?.remoteHostProfile === true,
+      ...(capabilities?.toolRelay === true ? { toolRelay: true } : {}),
+      ...(capabilities?.projectFiles ? { projectFiles: capabilities.projectFiles } : {}),
+    };
+  };
+
+  const versionOf = (adapter: RacpRemoteHostClient): string =>
+    adapter.initialized()?.server.version ?? "";
 
   const summaryOf = (record: RemoteHostRecord): RemoteHostSummary => {
     const live = opened.find((host) => host.hostKey === record.hostKey);
@@ -325,6 +473,13 @@ export function createRemoteHostsBoot(
       url: live?.url ?? record.url,
       connected: live !== undefined,
       transport: transportOf(record),
+      // A host that never finished a handshake advertises nothing, which is
+      // exactly what an offline host can serve.
+      capabilities: live?.capabilities ?? {
+        terminal: false,
+        workspace: false,
+      },
+      version: live?.version ?? "",
     };
   };
 
@@ -346,6 +501,19 @@ export function createRemoteHostsBoot(
       return { ...summaryOf(record), connected: false };
     }
   };
+
+  const projectService = createRemoteProjectService({
+    registry: projects,
+    pairedHostKeys: async () => (await registry.list()).map((record) => record.hostKey),
+    requireHost: (hostKey) => {
+      const host = requireLive(hostKey);
+      return {
+        capabilities: host.capabilities,
+        request: (method, params) => host.adapter.client.request(method, params),
+        registerSession: (id) => host.connection.registerSession(id),
+      };
+    },
+  });
 
   return {
     registry,
@@ -417,6 +585,25 @@ export function createRemoteHostsBoot(
       // A paired host that never came online still owns a tunnel slot.
       await tunnels.close(hostKey);
       await registry.remove(hostKey);
+      // The host's projects are meaningless without it, and leaving them
+      // would show folders the user can no longer reach.
+      await projects.removeForHost(hostKey);
+      projectService.invalidateHost(hostKey);
+    },
+    async browse(hostKey, path) {
+      const host = requireLive(hostKey);
+      // `project/browse` is owner-only: the desktop device holds owner for a
+      // host it paired itself, and the host still enforces its own bounds.
+      return host.adapter.client.request<RemoteBrowseResult>("project/browse", {
+        ...(path ? { path } : {}),
+      });
+    },
+    ...projectService,
+    terminal(hostKey) {
+      return opened.find((host) => host.hostKey === hostKey)?.terminal ?? null;
+    },
+    terminalForId(terminalId) {
+      return opened.find((host) => host.terminal.owns(terminalId))?.terminal ?? null;
     },
   };
 }

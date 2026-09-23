@@ -46,6 +46,8 @@ import {
 import { McpOAuthManager } from "../mcp-oauth";
 import { PluginPanelHost } from "../plugin-panel-host";
 import { PluginViewHost } from "../plugin-view-host";
+import { RemoteFileViewService } from "../remote/remote-file-view";
+import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts";
 import { BrowserPane } from "../browser-view";
 import { BrowserHost, BROWSER_PLUGIN_ID } from "../browser-host";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
@@ -555,6 +557,11 @@ export function createPluginServices({
     });
   });
   pluginPanels.addSenderResolver((senderId) => pluginViews.pluginIdForSender(senderId));
+  const remoteFileViews = new RemoteFileViewService(
+    (senderId) => pluginViews.bindingForSender(senderId),
+    getActiveRemoteHostsBoot,
+  );
+  pluginViews.onDestroy = (senderId) => remoteFileViews.release(senderId);
   const browserHost = new BrowserHost({
     pane: browserPane,
     isPluginLoaded: (pluginId) => Boolean(plugins.getLoaded(pluginId)),
@@ -582,6 +589,12 @@ export function createPluginServices({
     browserHost.setChromeSurface(surface);
   };
   plugins.setServices({
+    remoteFileView: (input) => {
+      // Detached windows remain local. The panel host already authenticated
+      // them; unknown/destroyed docked senders must not reach child file code.
+      if (input.senderId !== undefined && pluginPanels.ownsSender(input.senderId)) return undefined;
+      return remoteFileViews.intercept(input);
+    },
     /**
      * The richer workspace payload, so `pi.workspace.get` and the
      * `workspace:changed` event both expose the open project's folder roots
@@ -613,6 +626,7 @@ export function createPluginServices({
       cdp: (method, params) => browserHost.cdpCommand(method, params),
     },
     onPluginUnload: (pluginId) => {
+      pluginViews.closePlugin(pluginId);
       if (pluginId === BROWSER_PLUGIN_ID) browserHost.disposeGuest();
     },
   });

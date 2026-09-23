@@ -1805,6 +1805,675 @@
       }
     }
   },
+  "ProjectFileEntry": {
+    "type": "object",
+    "required": [
+      "name",
+      "path",
+      "isDirectory"
+    ],
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "isDirectory": {
+        "type": "boolean"
+      },
+      "size": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "mtimeMs": {
+        "type": "number"
+      },
+      "isSymlink": {
+        "type": "boolean"
+      },
+      "outside": {
+        "type": "boolean"
+      },
+      "ignored": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesListInput": {
+    "type": "object",
+    "required": [
+      "projectId"
+    ],
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesReadInput": {
+    "type": "object",
+    "required": [
+      "projectId",
+      "path"
+    ],
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesSearchInput": {
+    "type": "object",
+    "required": [
+      "projectId",
+      "query"
+    ],
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "query": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "cursor": {
+        "type": "string",
+        "maxLength": 4,
+        "pattern": "^(0|[1-9][0-9]{0,3})$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesWriteInput": {
+    "type": "object",
+    "required": [
+      "projectId",
+      "requestId",
+      "path",
+      "text",
+      "expectedVersion"
+    ],
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "text": {
+        "type": "string",
+        "maxLength": 131072
+      },
+      "expectedVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "eol": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "lf"
+          },
+          {
+            "type": "string",
+            "const": "crlf"
+          }
+        ]
+      },
+      "bom": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesCreateInput": {
+    "type": "object",
+    "required": [
+      "projectId",
+      "requestId",
+      "parent",
+      "name",
+      "isDirectory"
+    ],
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+      },
+      "parent": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "isDirectory": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesRenameInput": {
+    "type": "object",
+    "required": [
+      "projectId",
+      "requestId",
+      "path",
+      "newName"
+    ],
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "newName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesMoveInput": {
+    "type": "object",
+    "required": [
+      "projectId",
+      "requestId",
+      "from",
+      "toDir"
+    ],
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+      },
+      "from": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "toDir": {
+        "type": "string",
+        "maxLength": 1024
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesListResult": {
+    "type": "object",
+    "required": [
+      "ok",
+      "path",
+      "entries",
+      "truncated",
+      "ignoreActive"
+    ],
+    "properties": {
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "entries": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "path",
+            "isDirectory"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "isDirectory": {
+              "type": "boolean"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mtimeMs": {
+              "type": "number"
+            },
+            "isSymlink": {
+              "type": "boolean"
+            },
+            "outside": {
+              "type": "boolean"
+            },
+            "ignored": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 1000
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "ignoreActive": {
+        "type": "boolean",
+        "const": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesReadResult": {
+    "anyOf": [
+      {
+        "type": "object",
+        "required": [
+          "ok",
+          "path",
+          "size",
+          "mtimeMs",
+          "version",
+          "kind",
+          "text",
+          "eol",
+          "bom"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mtimeMs": {
+            "type": "number"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "const": "text"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 131072
+          },
+          "eol": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "lf"
+              },
+              {
+                "type": "string",
+                "const": "crlf"
+              }
+            ]
+          },
+          "bom": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "ok",
+          "path",
+          "size",
+          "mtimeMs",
+          "version",
+          "kind",
+          "dataUri",
+          "mime"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mtimeMs": {
+            "type": "number"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "const": "image"
+          },
+          "dataUri": {
+            "type": "string",
+            "maxLength": 350000
+          },
+          "mime": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "ok",
+          "path",
+          "size",
+          "mtimeMs",
+          "version",
+          "kind"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mtimeMs": {
+            "type": "number"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "const": "binary"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "ok",
+          "path",
+          "size",
+          "mtimeMs",
+          "kind",
+          "limit"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mtimeMs": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "const": "tooLarge"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "ProjectFilesSearchResult": {
+    "type": "object",
+    "required": [
+      "ok",
+      "matches",
+      "truncated"
+    ],
+    "properties": {
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "matches": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "path",
+            "isDirectory"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "isDirectory": {
+              "type": "boolean"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "mtimeMs": {
+              "type": "number"
+            },
+            "isSymlink": {
+              "type": "boolean"
+            },
+            "outside": {
+              "type": "boolean"
+            },
+            "ignored": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 200
+      },
+      "cursor": {
+        "type": "string",
+        "maxLength": 4
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesWriteResult": {
+    "type": "object",
+    "required": [
+      "ok",
+      "path",
+      "size",
+      "mtimeMs",
+      "version"
+    ],
+    "properties": {
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "path": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "size": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "mtimeMs": {
+        "type": "number"
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProjectFilesEntryResult": {
+    "type": "object",
+    "required": [
+      "ok",
+      "entry"
+    ],
+    "properties": {
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "entry": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "isDirectory"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "isDirectory": {
+            "type": "boolean"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mtimeMs": {
+            "type": "number"
+          },
+          "isSymlink": {
+            "type": "boolean"
+          },
+          "outside": {
+            "type": "boolean"
+          },
+          "ignored": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
   "InitializeParams": {
     "type": "object",
     "required": [
@@ -2022,6 +2691,26 @@
           },
           "notifications": {
             "type": "boolean"
+          },
+          "projectFiles": {
+            "type": "object",
+            "required": [
+              "version",
+              "read",
+              "write"
+            ],
+            "properties": {
+              "version": {
+                "type": "number",
+                "const": 1
+              },
+              "read": {
+                "type": "boolean"
+              },
+              "write": {
+                "type": "boolean"
+              }
+            }
           },
           "bindings": {
             "type": "array",

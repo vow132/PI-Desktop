@@ -136,6 +136,8 @@ export type PluginViewMeta = {
   pluginName: string;
   icon?: string;
   order: number;
+  /** Declarative host-mediated workspace files protocol, not a root grant. */
+  workspaceFiles?: { version: 1; channelPrefix: string };
 };
 
 /** A data-only scenic Settings destination rendered by the host React tree. */

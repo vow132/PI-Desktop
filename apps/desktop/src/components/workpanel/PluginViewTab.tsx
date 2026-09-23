@@ -23,6 +23,7 @@ export function PluginViewTab({
   icon,
   blocked = false,
   sessionId,
+  remoteProjectId,
   location,
 }: {
   pluginId: string;
@@ -31,11 +32,14 @@ export function PluginViewTab({
   icon?: string;
   blocked?: boolean;
   sessionId?: string;
+  remoteProjectId?: string;
   location?: string;
 }) {
   const { t } = useTranslation();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
+  const identity = JSON.stringify([pluginId, viewId, sessionId, remoteProjectId]);
 
   // Create the view, and re-create it whenever the plugin's lifecycle changed
   // underneath us: a crash, a development reload, or a re-enable all destroy
@@ -43,12 +47,13 @@ export function PluginViewTab({
   useEffect(() => {
     let current = true;
     const open = () => {
-      void api.pluginViewOpen(pluginId, viewId, { sessionId, location }).then(
+      setOpened(null);
+      void api.pluginViewOpen(pluginId, viewId, { sessionId, location, remoteProjectId }).then(
         () => {
-          if (current) setFailed(false);
+          if (current) { setFailed(null); setOpened(identity); }
         },
-        () => {
-          if (current) setFailed(true);
+        (error: unknown) => {
+          if (current) setFailed(error instanceof Error ? error.message : t("panel.pluginView.failed"));
         },
       );
     };
@@ -61,16 +66,16 @@ export function PluginViewTab({
       current = false;
       off();
     };
-  }, [pluginId, viewId, sessionId, location]);
+  }, [pluginId, viewId, sessionId, location, remoteProjectId, identity, t]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
-    if (!surface || failed) return;
+    if (!surface || failed || opened !== identity) return;
     void api.pluginViewSetVisible(pluginId, viewId, !blocked, sessionId);
     return () => {
       void api.pluginViewSetVisible(pluginId, viewId, false);
     };
-  }, [pluginId, viewId, blocked, failed, sessionId]);
+  }, [pluginId, viewId, blocked, failed, sessionId, remoteProjectId, opened, identity]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -105,7 +110,7 @@ export function PluginViewTab({
         <WorkTabEmpty
           icon={pluginViewIcon(icon) ?? IconPlug}
           title={title}
-          body={t("panel.pluginView.failed")}
+          body={failed || t("panel.pluginView.failed")}
         />
       </div>
     );

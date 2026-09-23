@@ -54,6 +54,7 @@ export * from "./image-generation.js";
 export * from "./font-size.js";
 export * from "./chat-content-width.js";
 export * from "./racp.js";
+export * from "./project-files.js";
 export * from "./trusted-extensions.js";
 export * from "./provider-retry.js";
 export * from "./message-stream.js";

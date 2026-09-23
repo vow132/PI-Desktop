@@ -17,7 +17,10 @@ const [transcript, markdown, api, main, panel, protocol, hook] = await Promise.a
 
 test("in-chat image display has a contained renderer-to-main bridge", () => {
   assert.match(protocol, /fsReadImageDataUrl: "pi-desktop\/fs\/readImageDataUrl"/);
-  assert.match(api, /fsReadImageDataUrl: \(ref: string, mimeType\?: string\)/);
+  // The optional trailing `sessionId` names the session whose root the image
+  // lives in: a remote session forwards to the paired host, a local one omits
+  // it and reads exactly as before.
+  assert.match(api, /fsReadImageDataUrl: \(ref: string, mimeType\?: string, sessionId\?: string\)/);
   assert.match(main, /IPC\.invoke\.fsReadImageDataUrl/);
   assert.match(main, /readOpenableImage\(/);
   assert.match(panel, /export async function readOpenableImage\(/);

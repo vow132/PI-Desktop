@@ -637,6 +637,8 @@ export type PluginViewContrib = {
   entry: string;
   /** Ascending sort key within the plugin-views menu group. Defaults to 0. */
   order?: number;
+  /** Host-mediated project files; remote roots require explicit reviewed permissions. */
+  workspaceFiles?: { version: 1; channelPrefix: string };
 };
 
 export type PluginCommand = {
@@ -1268,6 +1270,8 @@ export const PLUGIN_PERMISSIONS = [
   "fs.read",
   "fs.write",
   "fs.delete",
+  "workspace.remote.read",
+  "workspace.remote.write",
   "agent.tool.register",
   "agent.prompt.inject",
   "agent.complete",
@@ -1376,6 +1380,13 @@ export function validateManifest(raw: unknown): {
     }
   }
   const contributesError = validateContributions(m.contributes);
+  if (
+    !contributesError &&
+    (m.contributes?.views ?? []).some((view) => view.workspaceFiles) &&
+    !(m.permissions ?? []).includes("workspace.remote.read")
+  ) {
+    return { ok: false, error: "workspaceFiles requires the workspace.remote.read permission" };
+  }
   if (
     !contributesError &&
     (m.contributes?.agentExtensions?.length ?? 0) > 0 &&
@@ -1809,6 +1820,16 @@ export function validateContributions(
     if (entryError) return entryError;
     if (view.order !== undefined && !Number.isFinite(view.order)) {
       return `view "${view.id}" order must be a number`;
+    }
+    if (view.workspaceFiles !== undefined) {
+      const files = view.workspaceFiles;
+      if (!files || typeof files !== "object" || Array.isArray(files) ||
+          files.version !== 1 || typeof files.channelPrefix !== "string" ||
+          !/^[a-z][a-zA-Z0-9_-]{0,31}$/.test(files.channelPrefix) ||
+          ["workspace", "fs", "app", "plugin", "ui", "clipboard", "shell", "net", "browser", "themes", "models"].includes(files.channelPrefix) ||
+          Object.keys(files).some((key) => key !== "version" && key !== "channelPrefix")) {
+        return `view "${view.id}" workspaceFiles requires version 1 and a non-reserved channelPrefix`;
+      }
     }
     // `icon` is intentionally unchecked: an unknown token degrades to a letter
     // tile, so rejecting one would break a plugin over a cosmetic detail.

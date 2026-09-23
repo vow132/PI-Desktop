@@ -1,14 +1,19 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtemp, realpath, rm, writeFile, readFile, mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { basename, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RacpError } from "@pi-desktop/agent-host";
 
 import { createHostOperations } from "./host-operations.js";
 
 const dirs: string[] = [];
+function scratchDir(): string {
+  if (!process.env.PI_SCRATCH_DIR) throw new Error("PI_SCRATCH_DIR required");
+  return process.env.PI_SCRATCH_DIR;
+}
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
@@ -50,7 +55,7 @@ function fakeHost(calls: Array<{ method: string; params: unknown }>, projectPath
 
 describe("pi-host operations over host-core", () => {
   it("maps sessions, creates under a project id, and refuses configuration while busy", async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), "pi-host-ops-")));
+    const root = await realpath(await mkdtemp(join(scratchDir(), "pi-host-ops-")));
     dirs.push(root);
     const calls: Array<{ method: string; params: unknown }> = [];
     let busy = false;
@@ -60,7 +65,7 @@ describe("pi-host operations over host-core", () => {
       browseRoot: root,
     });
     const listed = await operations.sessions.list();
-    expect(listed[0]).toMatchObject({ id: "s1", workspaceLabel: root.split("/").pop() });
+    expect(listed[0]).toMatchObject({ id: "s1", workspaceLabel: basename(root) });
     const created = await operations.sessions.create({ title: "T", projectId: "7", permissionMode: "auto" }, { subject: "d", roles: ["owner"] });
     expect(created.permissionMode).toBe("auto");
     expect(calls.find((call) => call.method === "session.create")?.params).toMatchObject({ projectPath: root });
@@ -72,7 +77,7 @@ describe("pi-host operations over host-core", () => {
   });
 
   it("registers only existing directories and browses inside the root only", async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), "pi-host-ops-")));
+    const root = await realpath(await mkdtemp(join(scratchDir(), "pi-host-ops-")));
     dirs.push(root);
     const { mkdir } = await import("node:fs/promises");
     await mkdir(join(root, "work", "app"), { recursive: true });
@@ -92,8 +97,10 @@ describe("pi-host operations over host-core", () => {
   });
 
   it("serves workspace reads against the session root and refuses escapes", async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), "pi-host-ops-")));
+    const root = await realpath(await mkdtemp(join(scratchDir(), "pi-host-ops-")));
     dirs.push(root);
+    // Do not discover an unrelated repository above the isolated fixture.
+    vi.stubEnv("GIT_CEILING_DIRECTORIES", scratchDir());
     const { writeFile } = await import("node:fs/promises");
     await writeFile(join(root, "README.md"), "hello", "utf8");
     const operations = createHostOperations({ getHost: () => fakeHost([], root), runtime: { compact: async () => ({ accepted: true }), isBusy: () => false } });
@@ -104,5 +111,35 @@ describe("pi-host operations over host-core", () => {
     await expect(operations.workspace.list("s9", "")).rejects.toBeInstanceOf(RacpError);
     const diff = await operations.workspace.diff("s1");
     expect(diff.repo).toBe(false);
+  });
+
+  it("exposes registered-project file access without a session or arbitrary root", async () => {
+    const root = await realpath(await mkdtemp(join(scratchDir(), "pi-host-project-files-")));
+    dirs.push(root);
+    const calls: Array<{ method: string; params: unknown }> = [];
+    await writeFile(join(root, "a.txt"), "initial");
+    await mkdir(join(root, "host-state"));
+    await writeFile(join(root, "host-state", "device-tokens.json"), "private");
+    const operations = createHostOperations({
+      getHost: () => fakeHost(calls, root), runtime: { compact: async () => ({ accepted: true }), isBusy: () => false },
+      dataDir: join(root, "host-state"),
+    });
+    const files = operations.files!;
+    const owner = { subject: "device", roles: ["owner" as const] };
+    const mutation = () => ({ projectId: "7", requestId: randomUUID() });
+    expect((await operations.projects.list())[0]?.id).toBe("7");
+    expect((await files.list({ projectId: "7" })).entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    const read = await files.read({ projectId: "7", path: "a.txt" });
+    if (read.kind !== "text") throw new Error("expected text");
+    const saved = await files.write({ ...mutation(), path: "a.txt", text: "saved", expectedVersion: read.version }, owner);
+    expect(await files.read({ projectId: "7", path: "a.txt" })).toMatchObject({ text: "saved", version: saved.version });
+    await files.create({ ...mutation(), parent: "", name: "folder", isDirectory: true }, owner);
+    await files.create({ ...mutation(), parent: "", name: "new.txt", isDirectory: false }, owner);
+    await files.rename({ ...mutation(), path: "new.txt", newName: "renamed.txt" }, owner);
+    await files.move({ ...mutation(), from: "renamed.txt", toDir: "folder" }, owner);
+    expect(await readFile(join(root, "folder", "renamed.txt"), "utf8")).toBe("");
+    await expect(files.list({ projectId: "unknown" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(files.read({ projectId: "7", path: "host-state/device-tokens.json" })).rejects.toMatchObject({ code: "REMOTE_PATH_FORBIDDEN" });
+    expect(calls.every((call) => call.method === "projects.list")).toBe(true);
   });
 });

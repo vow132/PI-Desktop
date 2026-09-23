@@ -10,6 +10,7 @@ import { PluginViewHost, pluginViewKey } from "../plugin-view-host";
 import { PluginPanelHost } from "../plugin-panel-host";
 import type { PluginPanelTheme } from "../../shared/plugin-panel-chrome";
 import type { IpcRegistrar } from "./types";
+import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts";
 
 export type PluginUiIpcDependencies = {
   registrar: IpcRegistrar;
@@ -91,6 +92,7 @@ export function registerPluginUiIpc({
           pluginName: loaded.manifest.name,
           icon: view.icon,
           order: Number.isFinite(view.order) ? Number(view.order) : index,
+          ...(view.workspaceFiles ? { workspaceFiles: view.workspaceFiles } : {}),
         });
       });
     }
@@ -180,11 +182,13 @@ export function registerPluginUiIpc({
       viewId?: string;
       sessionId?: string;
       location?: string;
+      remoteProjectId?: string;
     }) => {
       const pluginId = String(payload?.pluginId ?? "");
       const viewId = String(payload?.viewId ?? "");
       const sessionId = String(payload?.sessionId ?? "").trim();
       const location = String(payload?.location ?? "").trim();
+      const remoteProjectId = typeof payload?.remoteProjectId === "string" ? payload.remoteProjectId : undefined;
       const isBrowserView = pluginId === BROWSER_PLUGIN_ID && viewId === BROWSER_VIEW_ID;
       if (isBrowserView && sessionId) browserHost.setChromeSession(sessionId);
       if (isBrowserView && sessionId && location) {
@@ -202,11 +206,24 @@ export function registerPluginUiIpc({
         (candidate) => candidate?.id === viewId,
       );
       if (!view) throw new Error("plugin has no such view");
+      if (remoteProjectId !== undefined) {
+        if (!view.workspaceFiles || view.workspaceFiles.version !== 1) {
+          throw new Error("UNSUPPORTED: This plugin view does not support remote workspace files.");
+        }
+        if (!loaded.permissions.has("workspace.remote.read")) {
+          throw new Error("PERMISSION_DENIED: workspace.remote.read requires permission review.");
+        }
+        if (!getActiveRemoteHostsBoot()?.getProject(remoteProjectId)) {
+          throw new Error("NOT_FOUND: Select a registered remote project before opening its files.");
+        }
+      }
       const htmlPath = join(loaded.path, view.entry);
       if (!existsSync(htmlPath)) throw new Error("view entry missing");
       pluginViews.open({
         pluginId,
         viewId,
+        remoteProjectId,
+        workspaceFiles: !!view.workspaceFiles,
         locale: getUpdaterLocale(),
         theme: getPluginPanelTheme(),
         htmlPath,

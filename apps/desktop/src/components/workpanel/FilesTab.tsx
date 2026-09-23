@@ -9,7 +9,9 @@ import {
 import { useTranslation } from "react-i18next";
 import type { FsEntry, FsReadResult } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
+import { activeSessionRoot } from "../../stores/slices/remote-slice";
 import { api } from "../../lib/api";
+import { listTargetDirectory, readTargetFile } from "../../lib/remote-file-access";
 import { Markdown } from "../Markdown";
 import { fileDirOf } from "../../lib/chat-links";
 import { cx } from "../ui";
@@ -147,9 +149,17 @@ let handledFileRequestSeq = 0;
 
 export function FilesTab() {
   const { t } = useTranslation();
-  const workspace = useAppStore((s) => s.workspace);
+  const root = useAppStore((state) => activeSessionRoot(state).path);
+  const remote = useAppStore((state) => activeSessionRoot(state).remote);
+  const sessionId = useAppStore((state) => activeSessionRoot(state).sessionId);
+  const remoteProjectId = useAppStore((state) => activeSessionRoot(state).remoteProjectId);
   const fileRequest = useAppStore((s) => s.workPanelFileRequest);
-  const root = workspace?.path ?? null;
+  const targetKey = JSON.stringify([root, sessionId, remoteProjectId, remote]);
+  const currentTarget = useRef(targetKey);
+  currentTarget.current = targetKey;
+  const readSequence = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const [dirs, setDirs] = useState<Record<string, DirState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -161,28 +171,31 @@ export function FilesTab() {
   // an actual root change: an unconditional [root] effect also runs on the
   // StrictMode remount, wiping the selection a chat file request just made
   // (first click landed on the tree instead of the file).
-  const prevRoot = useRef(root);
+  const prevRoot = useRef(targetKey);
   useEffect(() => {
-    if (prevRoot.current === root) return;
-    prevRoot.current = root;
+    if (prevRoot.current === targetKey) return;
+    prevRoot.current = targetKey;
+    readSequence.current++;
     setDirs({});
     setExpanded(new Set());
     setSelected(null);
     setFile(null);
     setFileError(false);
-  }, [root]);
+  }, [targetKey]);
 
   const loadDir = useCallback(
     async (rel: string) => {
       if (!root) return;
       try {
-        const res = await api.fsList(rel);
+        const res = await listTargetDirectory({ remote, sessionId }, rel);
+        if (!mounted.current || currentTarget.current !== targetKey) return;
         setDirs((prev) => ({ ...prev, [rel]: { entries: res.entries } }));
       } catch {
+        if (!mounted.current || currentTarget.current !== targetKey) return;
         setDirs((prev) => ({ ...prev, [rel]: { entries: [], error: true } }));
       }
     },
-    [root],
+    [root, remote, sessionId, targetKey],
   );
 
   useEffect(() => {
@@ -206,15 +219,17 @@ export function FilesTab() {
   );
 
   const openFile = useCallback(async (rel: string, mimeType?: string) => {
+    const request = ++readSequence.current;
     setSelected(rel);
     setFile(null);
     setFileError(false);
     try {
-      setFile(await api.fsRead(rel, mimeType));
+      const result = await readTargetFile({ remote, sessionId }, rel, mimeType);
+      if (mounted.current && currentTarget.current === targetKey && request === readSequence.current) setFile(result);
     } catch {
-      setFileError(true);
+      if (mounted.current && currentTarget.current === targetKey && request === readSequence.current) setFileError(true);
     }
-  }, []);
+  }, [remote, sessionId, targetKey]);
 
   // Chat-initiated previews: open the file and expand its ancestor folders
   // so "back" lands on a tree that reveals it. Attachment blobs and absolute
@@ -315,6 +330,7 @@ export function FilesTab() {
             tooltip={t("panel.files.back")}
             ariaLabel={t("panel.files.back")}
             onClick={() => {
+              readSequence.current++;
               setSelected(null);
               setFile(null);
             }}
@@ -330,7 +346,8 @@ export function FilesTab() {
             className="icon-btn icon-btn-square"
             tooltip={t("panel.files.reveal")}
             ariaLabel={t("panel.files.reveal")}
-            onClick={() => void api.fsReveal(selected)}
+            disabled={remote}
+            onClick={() => { if (!remote) void api.fsReveal(selected); }}
           >
             <IconExternal size={14} />
           </TooltipButton>

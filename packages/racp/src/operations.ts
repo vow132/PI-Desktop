@@ -5,6 +5,8 @@ import {
   RacpCursorSchema,
   RacpInputResponseSchema,
   RacpRequestContextSchema,
+  isProjectFilesInput,
+  type ProjectFilesMethod,
   type RacpCursor,
   type RacpLimits,
   type RacpOperation,
@@ -122,6 +124,18 @@ function unavailable(capability: string): OperationHandler {
   };
 }
 
+function projectFilesHandler<K extends ProjectFilesMethod>(method: K, mutation: boolean): OperationHandler {
+  return async (context, params) => {
+    const files = context.operations.files;
+    const capability = context.capabilities.projectFiles;
+    if (!files || capability?.version !== 1 || !capability[mutation ? "write" : "read"]) {
+      throw new RacpError("CAPABILITY_UNAVAILABLE", "this Host does not offer project-file access");
+    }
+    if (!isProjectFilesInput(method, params)) throw new RacpError("INVALID_ARGUMENT", "invalid project-file params");
+    return files[method](params, context.principal);
+  };
+}
+
 /** The operation catalog bound to the Agent Host module and the Host operations. */
 export function createOperations(): Map<RacpOperation, OperationHandler> {
   const handlers = new Map<RacpOperation, OperationHandler>();
@@ -164,6 +178,13 @@ export function createOperations(): Map<RacpOperation, OperationHandler> {
     const input = check(Type.Object({ path: Type.Optional(Type.String()) }), params);
     return context.operations.projects.browse(input.path);
   });
+  handlers.set("project/files/list", projectFilesHandler("list", false));
+  handlers.set("project/files/read", projectFilesHandler("read", false));
+  handlers.set("project/files/search", projectFilesHandler("search", false));
+  handlers.set("project/files/write", projectFilesHandler("write", true));
+  handlers.set("project/files/create", projectFilesHandler("create", true));
+  handlers.set("project/files/rename", projectFilesHandler("rename", true));
+  handlers.set("project/files/move", projectFilesHandler("move", true));
 
   handlers.set("session/list", async (context) => {
     const sessions = await context.operations.sessions.list();

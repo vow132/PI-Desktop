@@ -620,17 +620,24 @@ export function registerWorkspaceIpc({
     },
   );
 
-  handle(IPC.invoke.workspaceDiff, async () => {
-    if (!host) throw new Error("host unavailable");
-    const res = (await host.call("workspace.get")) as {
-      workspace: { path: string } | null;
-    };
-    const cwd = res.workspace?.path;
-    if (!cwd) {
-      return { repo: false, clean: true, files: [] };
-    }
-    return collectWorkspaceDiff(cwd);
-  });
+  handle(
+    IPC.invoke.workspaceDiff,
+    async (input: { sessionId?: string } = {}) => {
+      // `sessionId` is a routing hint only: it names the session whose root
+      // the diff belongs to, so a renderer call for a paired remote host can
+      // be forwarded before this handler runs. The local path ignores it.
+      void input.sessionId;
+      if (!host) throw new Error("host unavailable");
+      const res = (await host.call("workspace.get")) as {
+        workspace: { path: string } | null;
+      };
+      const cwd = res.workspace?.path;
+      if (!cwd) {
+        return { repo: false, clean: true, files: [] };
+      }
+      return collectWorkspaceDiff(cwd);
+    },
+  );
   handle(
     IPC.invoke.workspaceReviewRollback,
     async (input: { sessionId: string; snapshotId: string }) => {
@@ -727,10 +734,15 @@ export function registerWorkspaceIpc({
     return root;
   };
 
-  handle(IPC.invoke.fsList, async (input: { path?: string } = {}) => {
-    const root = await requireWorkspaceRoot();
-    return { entries: await listDir(root, String(input.path ?? "")) };
-  });
+  handle(
+    IPC.invoke.fsList,
+    async (input: { path?: string; sessionId?: string } = {}) => {
+      // `sessionId` is a routing hint only — see `workspaceDiff`.
+      void input.sessionId;
+      const root = await requireWorkspaceRoot();
+      return { entries: await listDir(root, String(input.path ?? "")) };
+    },
+  );
 
   /**
    * Roots the host file tab may read besides the workspace: the session stores,
@@ -816,7 +828,9 @@ export function registerWorkspaceIpc({
 
   handle(
     IPC.invoke.fsRead,
-    async (input: { path?: string; mimeType?: string } = {}) => {
+    async (input: { path?: string; mimeType?: string; sessionId?: string } = {}) => {
+      // `sessionId` is a routing hint only — see `workspaceDiff`.
+      void input.sessionId;
       const requested = String(input.path ?? "").trim();
       let workspaceRoot: string | null = null;
       try {
@@ -837,7 +851,9 @@ export function registerWorkspaceIpc({
 
   handle(
     IPC.invoke.fsReadImageDataUrl,
-    async (input: { ref?: string; mimeType?: string } = {}) => {
+    async (input: { ref?: string; mimeType?: string; sessionId?: string } = {}) => {
+      // `sessionId` is a routing hint only — see `workspaceDiff`.
+      void input.sessionId;
       const workspaceRoot = await optionalWorkspaceRoot();
       const requested = String(input.ref ?? "").trim();
       return readOpenableImage(

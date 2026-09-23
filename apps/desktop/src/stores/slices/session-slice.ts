@@ -36,6 +36,7 @@ import {
   type SessionMeta,
 } from "../../lib/sidebar-preferences";
 import { api } from "../../lib/api";
+import { remoteProjectForSession } from "../../lib/remote-projects";
 import { createRefreshCoordinator } from "../../lib/refresh-coordinator";
 import {
   applyOptimisticSessionConfiguration,
@@ -243,6 +244,7 @@ export function createSessionSlice({
         );
       }
       set({ selectingSessionId: id, page: "chat" });
+      let selectedSummary = stateAtStart.sessions.find((session) => session.id === id);
 
       const commitSelection = (
         messages: UiMessage[],
@@ -258,6 +260,9 @@ export function createSessionSlice({
           ...(state.activeSessionId === id ? {} : switchWorkPanelSession(state, id)),
           ...retainSessionPane(state, id, messages),
           activeSessionId: id,
+          activeRemoteProjectId: selectedSummary?.source === "remote"
+            ? remoteProjectForSession(selectedSummary, state.remoteProjects)?.id ?? null
+            : null,
           selectingSessionId: revalidating ? id : undefined,
           messages,
           sessionHistory: { ...state.sessionHistory, [id]: historyWindow },
@@ -281,7 +286,9 @@ export function createSessionSlice({
         });
       };
 
-      const alignWorkspace = async (projectPath?: string | null) => {
+      const alignWorkspace = async (session?: SessionSummary | null) => {
+        if (session?.source === "remote") return runtime.navigationIntentIsCurrent(intent);
+        const projectPath = session?.projectPath;
         if (projectPath) {
           if (
             !sessionMatchesProject(
@@ -305,6 +312,10 @@ export function createSessionSlice({
       try {
         if (!runtime.navigationIntentIsCurrent(intent)) return;
         const summary = get().sessions.find((session) => session.id === id);
+        if (summary?.source === "remote" && summary.hostKey &&
+            !get().remoteHosts.some((host) => host.hostKey === summary.hostKey && host.connected)) {
+          throw new Error(i18n.t("remote.offline"));
+        }
         const detailPromise = runtime.loadSessionDetail(id, {
           messageLimit: 100,
           contentLimit: 64 * 1024,
@@ -329,7 +340,7 @@ export function createSessionSlice({
         if (summary) {
           if (
             !(await runtime.queueWorkspaceAlignment(() =>
-              alignWorkspace(summary.projectPath),
+              alignWorkspace(summary),
             ))
           ) {
             return;
@@ -337,9 +348,10 @@ export function createSessionSlice({
         } else {
           detail = await detailPromise;
           if (!runtime.navigationIntentIsCurrent(intent)) return;
+          selectedSummary = detail?.session ?? undefined;
           if (
             !(await runtime.queueWorkspaceAlignment(() =>
-              alignWorkspace(detail?.session?.projectPath),
+              alignWorkspace(detail?.session),
             ))
           ) {
             return;
@@ -362,6 +374,10 @@ export function createSessionSlice({
 
         detail ??= await detailPromise;
         if (!runtime.navigationIntentIsCurrent(intent)) return;
+        selectedSummary ??= detail.session ?? undefined;
+        if (selectedSummary?.source === "remote" && !detail.session) {
+          throw new Error(i18n.t("remote.offline"));
+        }
         if (detail.session && sessionReadLooksEmpty(detail.session)) {
           // A window read that comes back empty for a session the sidebar
           // counts as having history is not an empty conversation (#795). Ask
@@ -426,6 +442,7 @@ export function createSessionSlice({
         const selected = get().sessions.find((session) => session.id === id);
         if (
           selected &&
+          selected.source !== "remote" &&
           sessionNeedsModelPin(selected) &&
           get().pendingPlans[id]?.status !== "pending"
         ) {
@@ -484,6 +501,10 @@ export function createSessionSlice({
       }
 
       const intent = runtime.beginNavigationIntent();
+      if (get().activeRemoteProjectId) {
+        get().resetWorkPanelContext();
+        set({ activeRemoteProjectId: null });
+      }
       const request = (async () => {
         if (
           requestedProjectPath &&
@@ -504,7 +525,7 @@ export function createSessionSlice({
         }
 
         const latest = runtime.latestSessionInScope(
-          get().sessions,
+          get().sessions.filter((session) => session.source !== "remote"),
           requestedProjectPath,
           get().sessionMeta,
         );
@@ -544,7 +565,7 @@ export function createSessionSlice({
       const source = state.sessions.find((session) => session.id === id);
       if (!source) throw new Error(i18n.t("errors.sessionNotFound"));
 
-      if (source.projectPath) {
+      if (source.source !== "remote" && source.projectPath) {
         if (
           !sessionMatchesProject(
             { projectPath: state.activeProjectPath },
@@ -557,7 +578,7 @@ export function createSessionSlice({
           if (!runtime.navigationIntentIsCurrent(intent)) return;
           if (!workspace) throw new Error(i18n.t("errors.workspaceActivationFailed"));
         }
-      } else if (state.workspace) {
+      } else if (source.source !== "remote" && state.workspace) {
         await get().clearProject({ navigationIntent: intent });
         if (!runtime.navigationIntentIsCurrent(intent)) return;
       }

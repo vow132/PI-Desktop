@@ -1,6 +1,7 @@
 import { session, shell, WebContentsView, type BrowserWindow } from "electron";
 import { join } from "node:path";
 import { parseAllowedExternalUrl } from "./safe-open-external";
+import type { FileViewBinding } from "./remote/remote-file-view-contract";
 import {
   PLUGIN_VIEW_LOCATION_EVENT,
   PLUGIN_VIEW_LOCATION_PARAM,
@@ -44,6 +45,9 @@ export { PLUGIN_VIEW_LOCATION_EVENT, PLUGIN_VIEW_LOCATION_PARAM, viewEntryUrl };
 
 /** Live views kept warm; the least recently shown one is evicted past this. */
 const MAX_LIVE_VIEWS = 4;
+// File views may contain unsaved buffers. Refuse a new context at this cap,
+// rather than evicting one whose dirty state only the plugin can know.
+const MAX_FILE_VIEW_CONTEXTS = 16;
 
 export type PluginViewOpenRequest = {
   pluginId: string;
@@ -67,6 +71,8 @@ export type PluginViewOpenRequest = {
    * instead and never receives this.
    */
   location?: string;
+  remoteProjectId?: string;
+  workspaceFiles?: boolean;
 };
 
 export type PluginViewBounds = {
@@ -79,6 +85,11 @@ export type PluginViewBounds = {
 type LiveView = {
   key: string;
   pluginId: string;
+  viewId: string;
+  remoteProjectId?: string;
+  preserveBuffers: boolean;
+  generation: number;
+  activity: number;
   view: WebContentsView;
   /** Absolute path to this view's HTML entry; its URL is rebuilt from it. */
   htmlPath: string;
@@ -92,6 +103,7 @@ type LiveView = {
   location: string | null;
   /** False until the first document finished loading. */
   loaded: boolean;
+  started: boolean;
 };
 
 export function pluginViewKey(pluginId: string, viewId: string): string {
@@ -106,6 +118,9 @@ export class PluginViewHost {
   private bounds: PluginViewBounds = { x: 0, y: 0, width: 0, height: 0 };
   private clock = 0;
   private onBlockedRequest?: PluginPanelBlockedRequest;
+  private selected = new Map<string, string>();
+  private generation = 0;
+  onDestroy?: (senderId: number) => void;
 
   constructor(onBlockedRequest?: PluginPanelBlockedRequest) {
     this.onBlockedRequest = onBlockedRequest;
@@ -133,6 +148,9 @@ export class PluginViewHost {
     const channel = `pi-plugin-panel-event:${event}`;
     for (const entry of this.views.values()) {
       const wc = entry.view.webContents;
+      // A bound page must never see the local workspace broadcast, which the
+      // vendored UI treats as an instruction to reset its editor.
+      if (event === "workspace:changed" && entry.remoteProjectId) continue;
       if (wc.isDestroyed()) continue;
       try {
         wc.send(channel, payload);
@@ -150,7 +168,7 @@ export class PluginViewHost {
 
   /** Whether a live web contents exists for this view. */
   has(pluginId: string, viewId: string): boolean {
-    return this.views.has(pluginViewKey(pluginId, viewId));
+    return this.views.has(this.selected.get(pluginViewKey(pluginId, viewId)) ?? pluginViewKey(pluginId, viewId));
   }
 
   /**
@@ -161,6 +179,18 @@ export class PluginViewHost {
     for (const entry of this.views.values()) {
       const wc = entry.view.webContents;
       if (!wc.isDestroyed() && wc.id === senderId) return entry.pluginId;
+    }
+    return null;
+  }
+
+  bindingForSender(senderId: number): FileViewBinding | null {
+    for (const entry of this.views.values()) {
+      const wc = entry.view.webContents;
+      if (!wc.isDestroyed() && wc.id === senderId) return {
+        pluginId: entry.pluginId, viewId: entry.viewId,
+        remoteProjectId: entry.remoteProjectId, generation: entry.generation,
+        activity: entry.activity, active: this.visibleKey === entry.key,
+      };
     }
     return null;
   }
@@ -176,9 +206,17 @@ export class PluginViewHost {
    * not discarded by navigation.
    */
   open(request: PluginViewOpenRequest): void {
-    const key = pluginViewKey(request.pluginId, request.viewId);
+    const ref = pluginViewKey(request.pluginId, request.viewId);
+    const key = request.remoteProjectId ? `${ref}#${encodeURIComponent(request.remoteProjectId)}` : ref;
     const location = normalizeLocation(request.location);
     const existing = this.views.get(key);
+    if (!existing && request.workspaceFiles &&
+        [...this.views.values()].filter((entry) => entry.preserveBuffers).length >= MAX_FILE_VIEW_CONTEXTS) {
+      throw new Error("FILE_VIEW_LIMIT: Close a file view after saving its edits before opening another project.");
+    }
+    const previous = this.selected.get(ref);
+    if (previous && previous !== key && this.visibleKey === previous) this.detachVisible();
+    this.selected.set(ref, key);
     if (existing) {
       existing.usedAt = ++this.clock;
       this.deliverLocation(existing, location);
@@ -188,17 +226,32 @@ export class PluginViewHost {
     const entry: LiveView = {
       key,
       pluginId: request.pluginId,
+      viewId: request.viewId,
+      remoteProjectId: request.remoteProjectId,
+      preserveBuffers: request.workspaceFiles === true,
+      generation: ++this.generation,
+      activity: 0,
       view,
       htmlPath: request.htmlPath,
       usedAt: ++this.clock,
       location,
       loaded: false,
+      started: false,
     };
     this.views.set(key, entry);
+    const senderId = view.webContents.id;
+    view.webContents.once("destroyed", () => {
+      if (this.views.get(key) === entry) {
+        this.views.delete(key);
+        this.onDestroy?.(senderId);
+      }
+    });
     view.webContents.once("did-finish-load", () => {
       entry.loaded = true;
     });
-    this.load(entry);
+    // Remote file pages make hello/list calls as soon as they load. Start
+    // only after attachment so the trusted active-sender gate is already open.
+    if (!entry.remoteProjectId) this.load(entry);
     this.evictBeyondLimit();
   }
 
@@ -228,6 +281,8 @@ export class PluginViewHost {
   }
 
   private load(entry: LiveView): void {
+    if (entry.remoteProjectId && this.visibleKey !== entry.key) return;
+    entry.started = true;
     void entry.view.webContents
       .loadURL(viewEntryUrl(entry.htmlPath, entry.location))
       .catch(() => {
@@ -256,7 +311,8 @@ export class PluginViewHost {
    * from lingering above the renderer when the user switches tabs quickly.
    */
   setVisible(pluginId: string, viewId: string, visible: boolean): void {
-    const key = pluginViewKey(pluginId, viewId);
+    const ref = pluginViewKey(pluginId, viewId);
+    const key = this.selected.get(ref) ?? ref;
     if (!visible) {
       if (this.visibleKey === key) this.detachVisible();
       return;
@@ -272,22 +328,28 @@ export class PluginViewHost {
     }
     entry.view.setBounds(this.bounds);
     this.visibleKey = key;
+    if (!entry.started) this.load(entry);
     this.emitSurface();
   }
 
   close(pluginId: string, viewId: string): void {
-    this.destroy(pluginViewKey(pluginId, viewId));
+    for (const [key, entry] of this.views) {
+      if (entry.pluginId === pluginId && entry.viewId === viewId) this.destroy(key);
+    }
+    this.selected.delete(pluginViewKey(pluginId, viewId));
   }
 
   /** Drop every view a plugin owns — disable, uninstall, reload, or crash. */
   closePlugin(pluginId: string): void {
     for (const [key, entry] of [...this.views]) {
       if (entry.pluginId === pluginId) this.destroy(key);
+      if (entry.pluginId === pluginId) this.selected.delete(pluginViewKey(pluginId, entry.viewId));
     }
   }
 
   dispose(): void {
     for (const key of [...this.views.keys()]) this.destroy(key);
+    this.selected.clear();
   }
 
   private destroy(key: string): void {
@@ -295,11 +357,13 @@ export class PluginViewHost {
     if (!entry) return;
     if (this.visibleKey === key) this.detachVisible();
     this.views.delete(key);
+    this.onDestroy?.(entry.view.webContents.id);
     if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
   }
 
   private detachVisible(): void {
     const entry = this.visibleKey ? this.views.get(this.visibleKey) : null;
+    if (entry) entry.activity++;
     this.visibleKey = null;
     if (entry && this.window && !this.window.isDestroyed()) {
       const children = this.window.contentView.children;
@@ -316,14 +380,11 @@ export class PluginViewHost {
       this.onSurface(null);
       return;
     }
-    const separator = this.visibleKey.indexOf("/");
-    if (separator <= 0) {
-      this.onSurface(null);
-      return;
-    }
+    const entry = this.views.get(this.visibleKey);
+    if (!entry) return;
     this.onSurface({
-      pluginId: this.visibleKey.slice(0, separator),
-      viewId: this.visibleKey.slice(separator + 1),
+      pluginId: entry.pluginId,
+      viewId: entry.viewId,
       visible: true,
       bounds: this.bounds,
     });
@@ -331,9 +392,10 @@ export class PluginViewHost {
 
   /** Evict least-recently-shown views, never the one currently on screen. */
   private evictBeyondLimit(): void {
-    while (this.views.size > MAX_LIVE_VIEWS) {
+    while ([...this.views.values()].filter((entry) => !entry.preserveBuffers).length > MAX_LIVE_VIEWS) {
       const candidates = [...this.views.values()]
         .filter((entry) => entry.key !== this.visibleKey)
+        .filter((entry) => !entry.preserveBuffers)
         .sort((a, b) => a.usedAt - b.usedAt);
       const oldest = candidates[0];
       if (!oldest) return;

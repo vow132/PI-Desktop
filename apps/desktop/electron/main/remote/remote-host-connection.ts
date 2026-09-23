@@ -53,6 +53,13 @@ export interface RemoteHostConnection {
    */
   open(): Promise<void>;
   /**
+   * Register a backend for one host session id. Idempotent, and safe before
+   * {@link open}: a session this desktop just created is normally registered
+   * by the host's own `session.created` event, and registering it here too
+   * only makes the first use of it race-free.
+   */
+  registerSession(hostSessionId: string): Promise<void>;
+  /**
    * Detach the event subscription, unregister every session, and drop internal
    * state. Idempotent: closing twice is a no-op. The underlying transport is
    * the caller's responsibility.
@@ -112,6 +119,7 @@ export function createRemoteHostConnection(
 
   return {
     hostKey,
+    registerSession,
     async open() {
       if (opened) return;
       opened = true;

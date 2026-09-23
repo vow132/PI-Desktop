@@ -45,6 +45,9 @@ function fakeAdapter(options = {}) {
   return {
     requests,
     state: "disconnected",
+    // Mirrors the real adapter's accessor: the boot layer reads the host's
+    // negotiated capabilities and version from the initialize result.
+    initialized: () => options.initializeResult ?? null,
     async connect() {
       if (options.connectRejects) throw options.connectRejects;
       this.state = "connected";

@@ -22,6 +22,7 @@ export function collectSessionProjects(sessions: SessionSummary[]): SessionProje
   const projects = new Map<string, SessionProject>();
 
   for (const session of sessions) {
+    if (session.source === "remote") continue;
     const normalizedPath = normalizedProjectKey(session.projectPath);
     if (!normalizedPath || !session.projectPath) continue;
 

@@ -173,6 +173,8 @@ import { createSessionSlice } from "./slices/session-slice";
 import { createQueueSlice } from "./slices/queue-slice";
 import { createTranscriptSlice } from "./slices/transcript-slice";
 import { createProjectSlice } from "./slices/project-slice";
+import { createRemoteSlice } from "./slices/remote-slice";
+import { remoteAwareDraftMaterializer } from "./runtime/remote-project-navigation";
 import { createCatalogSlice } from "./slices/catalog-slice";
 import { createEventsSlice } from "./slices/events-slice";
 import { createInteractionSlice } from "./slices/interaction-slice";
@@ -436,8 +438,10 @@ const {
   rememberSessionCompactions,
   commitForkedSession,
   persistSessionAndSelect,
-  materializeDraftSession: materializeDraftSessionInternal,
 } = sessionCoordination;
+const materializeDraftSessionInternal = remoteAwareDraftMaterializer(
+  { ...runtimeStoreAccess, runtime: sessionRuntime }, sessionCoordination.materializeDraftSession,
+);
 
 const transcriptReading = createTranscriptReadingRuntime(runtimeStoreAccess, api.getSession);
 
@@ -507,6 +511,8 @@ export const useAppStore = create<AppState>((set, get) => {
     persistCurrentSidebar,
   }),
 
+  ...createRemoteSlice({ get, set, runtime: sessionRuntime }),
+
   ...createCatalogSlice({
     get,
     set,
@@ -541,6 +547,8 @@ export const useAppStore = create<AppState>((set, get) => {
     // Only the newest attempt may publish; an older in-flight one returns
     // without touching the store.
     const generation = ++bootstrapGeneration;
+    void get().loadRemoteHosts();
+    void get().loadRemoteProjects();
     let recoveredSettings: AppSettings | undefined;
     try {
       const settingsRequest = api.getSettings().then(async (settingsRaw) => {
@@ -670,6 +678,11 @@ export const useAppStore = create<AppState>((set, get) => {
         version,
         healthOk: health.ok,
         settings,
+        remoteHosts: get().remoteHosts,
+        remoteProjects: get().remoteProjects,
+        activeRemoteProjectId: get().activeRemoteProjectId,
+        remoteProjectErrors: get().remoteProjectErrors,
+        remoteProjectPending: get().remoteProjectPending,
         sessions: hydratedSessions,
         providers: providers.providers,
         providerModels: cachedProviderModels,
@@ -768,5 +781,5 @@ useAppStore.subscribe((state, previous) => {
 export async function materializeDraftSession(
   intent?: number,
 ): Promise<string | null> {
-  return sessionCoordination.materializeDraftSession(intent);
+  return materializeDraftSessionInternal(intent);
 }

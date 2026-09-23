@@ -65,6 +65,9 @@ import { ProjectEditDialog } from "./ProjectEditDialog";
 import { useArmedDelete } from "../hooks/use-armed-delete";
 import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { SessionRenameDialog } from "./SessionRenameDialog";
+import { ProjectSourceMenu } from "./projects/ProjectSourceMenu";
+import { RemoteConnectWizard } from "./projects/RemoteConnectWizard";
+import { RemoteProjectList } from "./projects/RemoteProjectList";
 import { useUpdateState } from "../hooks/use-update-state";
 import {
   IconArchive,
@@ -229,6 +232,7 @@ export function Sidebar({
   const openProjects = useAppStore((s) => s.openProjects);
   const openProjectPathsState = useAppStore((s) => s.openProjectPaths);
   const activeProjectPathState = useAppStore((s) => s.activeProjectPath);
+  const activeRemoteProjectId = useAppStore((s) => s.activeRemoteProjectId);
   const projectMeta = useAppStore((s) => s.projectMeta);
   const projectCollapsed = useAppStore((s) => s.projectCollapsed);
   const sessionMeta = useAppStore((s) => s.sessionMeta);
@@ -456,7 +460,7 @@ export function Sidebar({
   const displaySessionSort: Exclude<SessionSort, "manual"> =
     sessionSort === "manual" ? "recent" : sessionSort;
   const displayProjectSort: ProjectSort = projectSort;
-  const activeProjectPath = normalizeProjectPath(activeProjectPathState ?? workspace?.path);
+  const activeProjectPath = activeRemoteProjectId ? null : normalizeProjectPath(activeProjectPathState ?? workspace?.path);
   const selectedSessionId = selectingSessionId ?? activeSessionId;
   const openProjectPaths = useMemo(
     () =>
@@ -622,7 +626,7 @@ export function Sidebar({
     // Empty sessions are durable sidebar rows now. Their message count, not
     // their title, controls New Task reuse, so a manual rename never changes
     // the empty-slot behavior.
-    return candidates;
+    return candidates.filter((session) => session.source !== "remote");
   }, [sessions, showArchived, sessionMeta]);
 
   const compareSessions = useCallback((a: SessionSummary, b: SessionSummary) => {
@@ -2244,16 +2248,8 @@ export function Sidebar({
           }}
         >
           <span className="sidebar-list-label">{t("nav.projects")}</span>
-          <TooltipButton
-            type="button"
-            className="sidebar-toolbar-button"
-            data-action="new-project"
-            tooltip={t("nav.newProject")}
-            ariaLabel={t("nav.newProject")}
-            onClick={() => void openProjectPicker()}
-          >
-            <IconNewProject size={14} />
-          </TooltipButton>
+          {/* The only add control: 新建项目 and 远程连接 live in its menu. */}
+          <ProjectSourceMenu />
         </div>
 
         <div
@@ -2290,6 +2286,7 @@ export function Sidebar({
               </div>
             </section>
           )}
+          <RemoteProjectList />
         </div>
 
         <div className="sidebar-footer no-drag">
@@ -2375,6 +2372,7 @@ export function Sidebar({
           onError={reportError}
         />
       ) : null}
+      <RemoteConnectWizard />
       {editProjectFor ? (
         <ProjectEditDialog
           project={editProjectFor}

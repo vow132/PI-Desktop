@@ -355,3 +355,14 @@ test("parseBootstrapOutput refuses a ready line with an unusable port", () => {
   assert.deepEqual(pairing.pairing, { token: "ppt1.abc", expiresAt: 0 });
   assert.equal(parseBootstrapOutput('PI_HOST_PAIRING_TOKEN {"expiresAt":1}').pairing, null);
 });
+
+// A BOM in front of a function name makes dash report "Bad function name",
+// which is not diagnosable from the desktop UI. zzbomguardzz
+test("the generated script has no BOM or control characters", () => {
+  const script = buildBootstrapScript(scriptInput());
+  const bom = String.fromCharCode(65279);
+  assert.ok(!script.includes(bom), "the generated script must not embed a BOM");
+  const bad = new RegExp("[\u0000-\u0008\u000b\u000c\u000e-\u001f]");
+  const line = script.split("\n").findIndex(function (l) { return bad.test(l); });
+  assert.equal(line, -1, "the script must not embed control characters");
+});

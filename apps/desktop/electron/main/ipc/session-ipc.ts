@@ -13,6 +13,7 @@ import {
   type ModelConfigImportDraft,
   type Mode,
   type SessionThinkingLevel,
+  type RemoteHostSessionRow,
 } from "@pi-desktop/shared";
 import {
   convertSession,
@@ -105,6 +106,13 @@ export type SessionIpcDependencies = {
   enrichSession: (session: any, providers: any, defaults: any) => any;
   acquireSessionOperation: (sessionId: string) => Promise<() => void>;
   stripWinLongPrefix: (path: string) => string;
+  /**
+   * Sessions of every paired remote host. Injected so the merge below can be
+   * tested without a live connection, and so a build with no remote hosts
+   * never even constructs the dependency. A throw (no host connected) reads
+   * as "no remote rows" — the local list is unchanged either way.
+   */
+  remoteSessions?: () => Promise<RemoteHostSessionRow[]>;
 };
 
 export function registerSessionIpc({
@@ -121,6 +129,7 @@ export function registerSessionIpc({
   enrichSession,
   acquireSessionOperation,
   stripWinLongPrefix,
+  remoteSessions,
 }: SessionIpcDependencies): void {
   let host: HostProcess | null = null;
   let sidecar: AgentSidecar | null = null;
@@ -142,11 +151,18 @@ export function registerSessionIpc({
   });
   handle(IPC.invoke.sessionList, async () => {
     if (!host) throw new Error("host unavailable");
-    const [result, native, { providers, defaults }] = await Promise.all([
+    const [result, native, remote, { providers, defaults }] = await Promise.all([
       host.call<{ sessions: RuntimeSession[] }>("session.list"),
       sidecar
         ? sidecar.call<{ sessions: RuntimeSession[] }>("native.session.list").catch(() => ({ sessions: [] }))
         : Promise.resolve({ sessions: [] }),
+      // Remote rows are merged here rather than in the renderer so every
+      // surface that lists sessions — sidebar, search, tray, command
+      // palette — sees one list. A host that is offline contributes nothing,
+      // which is exactly the pre-merge behaviour.
+      remoteSessions
+        ? remoteSessions().catch(() => [])
+        : Promise.resolve([] as RemoteHostSessionRow[]),
       sessionCapabilityContext(),
     ]);
     return {
@@ -157,6 +173,22 @@ export function registerSessionIpc({
           source: "desktop",
         })),
         ...native.sessions,
+        // The namespaced `remote:` id is what the renderer echoes back, and
+        // the backend router resolves it — the renderer never parses it.
+        ...remote.map((session) => ({
+          id: session.id,
+          source: "remote",
+          hostKey: session.hostKey,
+          remoteProjectId: session.remoteProjectId,
+          title: session.title,
+          messageCount: 0,
+          projectPath: session.projectPath,
+          mode: session.mode,
+          thinkingLevel: "off",
+          permissionMode: session.permissionMode,
+          updatedAt: session.updatedAt,
+          createdAt: session.createdAt,
+        })),
       ].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))),
     };
   });

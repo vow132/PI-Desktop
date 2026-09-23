@@ -12,6 +12,7 @@ import type { Stats } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { RemoteFileViewInvocation } from "./remote/remote-file-view";
 import {
   busTopicAllowed,
   isDeniedFsPath,
@@ -219,6 +220,8 @@ export type PluginPanelRequest = {
 export type PluginPanelBridgeContext = {
   /** Absolute path recorded by the panel preload for a real drop gesture. */
   droppedPath?: string;
+  /** Authenticated Electron sender, never a plugin-supplied project identifier. */
+  senderId?: number;
 };
 
 /** Transport to one plugin host process (ADR 0008). */
@@ -280,6 +283,7 @@ export type PluginHostServices = {
    * visible workspace -- for a panel call or an unknown session.
    */
   getWorkspacePathForSession?: (sessionId: string) => string | null;
+  remoteFileView?: (input: RemoteFileViewInvocation) => Promise<unknown> | undefined;
   /** The set of `contributes.agentExtensions` modules changed (load/unload). */
   agentExtensionsChanged?: () => void;
   getLocale?: () => string;
@@ -2009,6 +2013,15 @@ export class PluginRuntime {
   ): Promise<unknown> {
     const loaded = this.loaded.get(pluginId);
     if (!loaded) throw apiError("NOT_FOUND", `plugin not loaded: ${pluginId}`);
+    const remote = this.services.remoteFileView?.({
+      pluginId, senderId: context?.senderId, channel, payload,
+      permissions: loaded.permissions, views: loaded.manifest.contributes?.views ?? [],
+      getSettings: () => this.hostApi(loaded).plugin.getSettings(),
+      invokePreferences: (preferences) => this.sendToChild(loaded, {
+        t: "call", method: "panel.invoke", payload: { channel, payload: preferences },
+      }, PLUGIN_PANEL_TIMEOUT_MS),
+    });
+    if (remote !== undefined) return remote;
     if (PANEL_SKILL_CHANNELS.has(channel)) {
       return this.sendToChild(
         loaded,

@@ -23,6 +23,8 @@
  * fake; `createSystemSshTransport` is the only implementation that spawns.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import { createServer, connect } from "node:net";
 import { ErrorCodes } from "@pi-desktop/shared";
 import { redactBootstrapOutput } from "./pi-host-bootstrap-script.js";
@@ -83,6 +85,8 @@ export type SystemSshTransportOptions = {
   binary?: string;
   /** Extra `-o` options appended after the ones this module always sets. */
   extraOptions?: string[];
+  /** Credential filesystem seam; defaults to `createSshAskpass`. */
+  createAskpass?: (password: string) => Promise<SshAskpassMaterial>;
   log?: (level: "info" | "warn", message: string, data?: unknown) => void;
 };
 
@@ -307,14 +311,68 @@ function runCommand(
   });
 }
 
+/**
+ * Where Windows ships the OpenSSH client when it is installed as a feature.
+ * C:\Windows\System32\OpenSSH is not on PATH on many machines, so a
+ * plain spawn("ssh") fails with ENOENT even though ssh is installed.
+ */
+const WINDOWS_SSH_DIRECTORIES: readonly string[] = [
+  `${process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows"}\\System32\\OpenSSH`,
+  `${process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows"}\\Sysnative\\OpenSSH`,
+];
+
+/**
+ * Absolute path to an installed ssh executable, or null when none is found.
+ * The well-known Windows directories are the fallback for machines where
+ * the feature is installed but never added to PATH.
+ */
+export function findSshBinary(exists: (candidate: string) => boolean = existsSync): string | null {
+  if (process.platform !== "win32") return null;
+  for (const dir of WINDOWS_SSH_DIRECTORIES) {
+    const candidate = join(dir, "ssh.exe");
+    if (exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Directory of a resolved Windows ssh, or null elsewhere. Adding it to a
+ * child PATH keeps ssh-internal lookups (ProxyCommand, helpers) working.
+ */
+export function sshPathDirectory(binary: string): string | null {
+  if (process.platform !== "win32") return null;
+  if (!/[\\/]/.test(binary)) return null;
+  return dirname(binary);
+}
+
+function resolveSshBinary(options: SystemSshTransportOptions): string {
+  const requested = options.binary && options.binary.trim();
+  if (requested) return requested;
+  return findSshBinary() ?? "ssh";
+}
+
+/** Child environment for one spawn: askpass material plus an ssh PATH fix. */
+function childEnvironment(base: NodeJS.ProcessEnv, binary: string): NodeJS.ProcessEnv {
+  const withPath = sshPathDirectory(binary);
+  if (!withPath) return { ...base };
+  const current = base.Path ?? base.PATH ?? "";
+  const entries = current.split(delimiter).filter((e) => e.length > 0);
+  if (entries.some((e) => e.toLowerCase() === withPath.toLowerCase())) return { ...base };
+  const merged = [withPath, ...entries].join(delimiter);
+  return { ...base, Path: merged, PATH: merged };
+}
 export function createSystemSshTransport(
   target: SshTarget,
   options: SystemSshTransportOptions = {},
 ): SshTransport {
   const log = options.log ?? (() => undefined);
-  const binary = options.binary ?? "ssh";
+  const binary = resolveSshBinary(options);
   const base = [...sshCommonArgs(target), ...(options.extraOptions ?? [])];
   const children = new Set<ChildProcessWithoutNullStreams>();
+  let disposed = false;
+  const assertActive = (errorCode: string): void => {
+    if (disposed) throw fail("ssh transport is disposed", errorCode);
+  };
 
   // Askpass material is written on the first spawn and dropped once no child
   // can still be authenticating. The reference count is what makes a transport
@@ -323,30 +381,76 @@ export function createSystemSshTransport(
   // disk for the whole session.
   let material: Promise<SshAskpassMaterial> | null = null;
   let holders = 0;
-  const acquireEnv = async (): Promise<NodeJS.ProcessEnv | undefined> => {
-    if (target.password === undefined) return undefined;
+  const failedCleanups = new Set<Promise<SshAskpassMaterial>>();
+  const cleanups = new Map<Promise<SshAskpassMaterial>, Promise<void>>();
+  const disposeMaterial = (current: Promise<SshAskpassMaterial>): Promise<void> => {
+    const pending = cleanups.get(current);
+    if (pending) return pending;
+    // Keep failed material owned, including material returned after disposal.
+    // Concurrent retry requests share one bounded cleanup attempt.
+    const cleanup = current.then(async (loaded) => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await loaded.dispose();
+          return true;
+        } catch {
+          // Never expose filesystem diagnostics containing credential paths.
+        }
+      }
+      return false;
+    }, () => true).then((cleaned) => {
+      // Acquisition failures already reach their callers and own no material.
+      cleanups.delete(current);
+      if (cleaned) failedCleanups.delete(current);
+      else {
+        failedCleanups.add(current);
+        log("warn", "ssh askpass material cleanup failed");
+      }
+    });
+    cleanups.set(current, cleanup);
+    return cleanup;
+  };
+  const retryFailedCleanups = (): Promise<void[]> =>
+    Promise.all([...failedCleanups].map(disposeMaterial));
+  const acquireEnv = async (errorCode: string): Promise<{
+    env?: NodeJS.ProcessEnv;
+    release(): Promise<void>;
+  }> => {
+    assertActive(errorCode);
+    if (failedCleanups.size > 0) {
+      await retryFailedCleanups();
+      assertActive(errorCode);
+    }
+    if (target.password === undefined) return { release: async () => undefined };
+    const current = material ??= (options.createAskpass ?? createSshAskpass)(target.password);
     holders += 1;
-    try {
-      material ??= createSshAskpass(target.password);
-      return { ...process.env, ...(await material).env };
-    } catch (error) {
+    let released = false;
+    const release = async (): Promise<void> => {
+      if (released) return;
+      released = true;
+      // Disposal detaches the material. A late release must not decrement the
+      // reset count or touch a newer acquisition while old cleanup is pending.
+      if (material !== current) return;
       holders -= 1;
+      if (holders > 0) return;
+      material = null;
+      await disposeMaterial(current);
+    };
+    try {
+      const loaded = await current;
+      assertActive(errorCode);
+      return { env: childEnvironment({ ...process.env, ...loaded.env }, binary), release };
+    } catch (error) {
+      await release();
       throw error;
     }
-  };
-  const releaseEnv = async (): Promise<void> => {
-    if (target.password === undefined) return;
-    holders -= 1;
-    if (holders > 0 || !material) return;
-    const current = material;
-    material = null;
-    await current.then((loaded) => loaded.dispose()).catch(() => undefined);
   };
 
   const spawnTracked = (
     args: string[],
     env?: NodeJS.ProcessEnv,
   ): ChildProcessWithoutNullStreams => {
+    assertActive(ErrorCodes.REMOTE_FORWARD_FAILED);
     const child = spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"], env });
     children.add(child);
     child.once("close", () => children.delete(child));
@@ -362,9 +466,10 @@ export function createSystemSshTransport(
     // `sh -s` reads the script from stdin, so the script never has to survive
     // an argv round trip and never lands in a remote file we must clean up.
     const args = input === undefined ? [...base, command] : [...base, "sh -s"];
-    const env = await acquireEnv();
+    const { env, release } = await acquireEnv(ErrorCodes.HOST_BOOTSTRAP_FAILED);
     let result: SshExecResult;
     try {
+      assertActive(ErrorCodes.HOST_BOOTSTRAP_FAILED);
       result = await runCommand(binary, args, {
         input,
         timeoutMs,
@@ -377,7 +482,7 @@ export function createSystemSshTransport(
       });
     } finally {
       // The child has authenticated by now, or it never will.
-      await releaseEnv();
+      await release();
     }
     if (result.code !== 0) {
       const stderr = redactBootstrapOutput(result.stderr).slice(-2000);
@@ -406,14 +511,20 @@ export function createSystemSshTransport(
     execWithInput: (command, input, execOptions) =>
       execOnce(command, input, execOptions?.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS),
     async forward({ localPort, remoteHost, remotePort, timeoutMs }) {
-      const env = await acquireEnv();
+      const { env, release } = await acquireEnv(ErrorCodes.REMOTE_FORWARD_FAILED);
       const args = [
         ...base,
         "-N",
         "-L",
         `127.0.0.1:${localPort}:${remoteHost}:${remotePort}`,
       ];
-      const child = spawnTracked(args, env);
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawnTracked(args, env);
+      } catch (error) {
+        await release();
+        throw error;
+      }
       let stderr = "";
       child.stderr.on("data", (chunk: Buffer) => {
         stderr += chunk.toString("utf8");
@@ -471,7 +582,7 @@ export function createSystemSshTransport(
         // to its own deadline with a referenced timer.
         probeAbort.abort();
         child.kill("SIGKILL");
-        await releaseEnv();
+        await release();
         throw error instanceof Error && "errorCode" in error
           ? error
           : fail(
@@ -482,7 +593,14 @@ export function createSystemSshTransport(
       // The forward is up, so authentication is over: the askpass helper has
       // answered its last prompt and the secret file has no further use. The
       // `ssh` process stays for the life of the tunnel, but without it.
-      await releaseEnv();
+      await release();
+      assertActive(ErrorCodes.REMOTE_FORWARD_FAILED);
+      if (exited) {
+        throw fail(
+          `ssh exited before the forward on 127.0.0.1:${localPort} was ready`,
+          ErrorCodes.REMOTE_FORWARD_FAILED,
+        );
+      }
       let disposed = false;
       return {
         localPort,
@@ -506,6 +624,9 @@ export function createSystemSshTransport(
       };
     },
     dispose() {
+      void retryFailedCleanups();
+      if (disposed) return;
+      disposed = true;
       for (const child of children) child.kill("SIGKILL");
       children.clear();
       // Killing the children means nothing can still be authenticating, so the
@@ -513,7 +634,7 @@ export function createSystemSshTransport(
       holders = 0;
       const current = material;
       material = null;
-      void current?.then((loaded) => loaded.dispose()).catch(() => undefined);
+      if (current) void disposeMaterial(current);
       log("info", "ssh transport disposed", { host: target.host });
     },
   };

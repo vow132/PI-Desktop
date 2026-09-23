@@ -1,10 +1,11 @@
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { RacpError, type Principal, type SessionSummary } from "@pi-desktop/agent-host";
 import {
   collectWorkspaceDiff,
+  createProjectFileService,
   listDir,
   readWorkspaceFile,
   toSessionSummary,
@@ -44,6 +45,8 @@ export type HostOperationsDeps = {
   revokeDevice?: (deviceId: string) => Promise<boolean>;
   /** Root the folder picker may not leave; defaults to the user's home directory. */
   browseRoot?: string;
+  /** Exclude Host state/credentials even when a project contains this directory. */
+  dataDir?: string;
 };
 
 function requireHost(getHost: () => HostRpc | null): HostRpc {
@@ -52,16 +55,17 @@ function requireHost(getHost: () => HostRpc | null): HostRpc {
   return host;
 }
 
+async function projectPathFor(projectId: string | undefined, host: HostRpc): Promise<string | undefined> {
+  if (!projectId) return undefined;
+  const { projects } = await host.call<{ projects: ProjectRow[] }>("projects.list", {}).catch(hostError);
+  const project = projects.find((row) => String(row.id) === projectId);
+  if (!project) throw new RacpError("NOT_FOUND", "registered project is unknown");
+  return project.path;
+}
+
 /** Session catalog over host-core RPC. */
 export function createSessionCatalog(deps: HostOperationsDeps): RacpSessionCatalog {
   const { getHost } = deps;
-  async function projectPathFor(projectId: string | undefined, host: HostRpc): Promise<string | undefined> {
-    if (!projectId) return undefined;
-    const { projects } = await host.call<{ projects: ProjectRow[] }>("projects.list", {});
-    const project = projects.find((row) => String(row.id) === projectId);
-    if (!project) throw new RacpError("NOT_FOUND", `project ${projectId} is unknown`);
-    return project.path;
-  }
   /**
    * host-core keys a session by its project path; RACP exposes the project id
    * (spec §5.1), so the summary is decorated from the projects table. A path
@@ -191,7 +195,8 @@ export function createProjectCatalog(deps: HostOperationsDeps): RacpProjectCatal
     async browse(path) {
       const target = path ? await canonicalDirectory(path) : browseRoot;
       const rootReal = await realpath(browseRoot).catch(() => browseRoot);
-      if (target !== rootReal && !target.startsWith(rootReal.endsWith("/") ? rootReal : `${rootReal}/`)) {
+      const rel = relative(rootReal, target);
+      if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
         throw new RacpError("REMOTE_PATH_FORBIDDEN", "path is outside the browsable root");
       }
       const dirents = await readdir(target, { withFileTypes: true }).catch(() => {
@@ -246,6 +251,14 @@ export function createHostOperations(deps: HostOperationsDeps): Omit<RacpHostOpe
     sessions: createSessionCatalog(deps),
     projects: createProjectCatalog(deps),
     workspace: createWorkspaceAccess(deps),
+    files: createProjectFileService({
+      projectRoot: async (projectId) => {
+        const path = await projectPathFor(projectId, requireHost(deps.getHost));
+        if (!path) throw new RacpError("NOT_FOUND", "registered project is unknown");
+        return path;
+      },
+      protectedPaths: deps.dataDir ? [deps.dataDir] : process.env.PI_DESKTOP_DATA_DIR ? [process.env.PI_DESKTOP_DATA_DIR] : [],
+    }),
     ...(deps.revokeDevice ? { revokeDevice: deps.revokeDevice } : {}),
   };
 }

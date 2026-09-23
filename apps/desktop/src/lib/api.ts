@@ -108,6 +108,9 @@ import type {
   RemoteHostPairRequest,
   RemoteHostPairResult,
   RemoteHostSummary,
+  RemoteProjectSummary,
+  /** One remote session in the shape the merged session list renders. */
+  RemoteHostSessionRow,
   UpdateState,
   WindowControlAction,
   CloseBehavior,
@@ -1022,7 +1025,7 @@ export const api = {
       /**
        * The host, the address it resolved to, and the guard's own reason behind
        * each failed source. Without them the panel can say a source was refused
-       * but not *what* was refused — and `198.18.0.1` is what tells a user their
+       * but not *what* was refused —and `198.18.0.1` is what tells a user their
        * proxy is in fake-IP mode. `route` adds which route the guard judged that
        * address on, so a fake-IP refusal on a direct route reads apart from one
        * on a proxied route (issue #419, ADR 0272).
@@ -1160,7 +1163,7 @@ export const api = {
   pluginViewOpen: (
     pluginId: string,
     viewId: string,
-    extra?: { sessionId?: string; location?: string },
+    extra?: { sessionId?: string; remoteProjectId?: string; location?: string },
   ) => invoke(IPC.invoke.pluginViewOpen, { pluginId, viewId, ...extra }),
   pluginViewClose: (pluginId: string, viewId: string) =>
     invoke(IPC.invoke.pluginViewClose, { pluginId, viewId }),
@@ -1250,13 +1253,19 @@ export const api = {
   /**
    * Quit the application. Used by the surfaces that own the window before the
    * shell has data; the main process runs the same ordered shutdown as the Quit
-   * menu item, so the answer may never arrive — callers must not depend on it.
+   * menu item, so the answer may never arrive —callers must not depend on it.
    */
   quitApp: () => invoke<{ ok: boolean }>(IPC.invoke.appQuit),
   /** Toggles the devtools console; rejects unless developer mode is on. */
   toggleDevTools: (open?: boolean) =>
     invoke<{ open: boolean }>(IPC.invoke.devtoolsToggle, { open }),
-  workspaceDiff: () => invoke<WorkspaceDiff>(IPC.invoke.workspaceDiff),
+  /**
+   * `sessionId` is passed through to main so a call for a paired remote
+   * session is forwarded before the local handler runs. A local session
+   * omits it and behaves exactly as before.
+   */
+  workspaceDiff: (sessionId?: string) =>
+    invoke<WorkspaceDiff>(IPC.invoke.workspaceDiff, { sessionId }),
   workspaceReviewRollback: (input: {
     sessionId: string;
     snapshotId: string;
@@ -1271,31 +1280,35 @@ export const api = {
     width: number;
     height: number;
   }) => invoke(IPC.invoke.browserSetBounds, bounds),
-  browserSetVisible: (visible: boolean) =>
-    invoke(IPC.invoke.browserSetVisible, { visible }),
+  browserSetVisible: (visible: boolean) => invoke(IPC.invoke.browserSetVisible, { visible }),
   browserOpenExternal: (url?: string) =>
     invoke(IPC.invoke.browserOpenExternal, url ? { url } : {}),
   browserGetState: () =>
     invoke<BrowserState | null>(IPC.invoke.browserGetState),
-  fsList: (path?: string) =>
-    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, { path: path ?? "" }),
-  fsRead: (path: string, mimeType?: string) =>
+  fsList: (path?: string, sessionId?: string) =>
+    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, {
+      path: path ?? "",
+      ...(sessionId ? { sessionId } : {}),
+    }),
+  fsRead: (path: string, mimeType?: string, sessionId?: string) =>
     invoke<FsReadResult>(IPC.invoke.fsRead, {
       path,
       ...(mimeType ? { mimeType } : {}),
+      ...(sessionId ? { sessionId } : {}),
     }),
-  fsReadImageDataUrl: (ref: string, mimeType?: string) =>
+  fsReadImageDataUrl: (ref: string, mimeType?: string, sessionId?: string) =>
     invoke<FsImageDataUrlResult>(IPC.invoke.fsReadImageDataUrl, {
       ref,
       ...(mimeType ? { mimeType } : {}),
+      ...(sessionId ? { sessionId } : {}),
     }),
   fsReveal: (path: string) => invoke(IPC.invoke.fsReveal, { path }),
   fsOpen: (path: string) => invoke(IPC.invoke.fsOpen, { path }),
   fsIndex: () => invoke<FsIndexResult>(IPC.invoke.fsIndex),
   /**
    * Complete a file reference from chat text to a real file (D320 follow-up).
-   * The main process owns the root order — project, session scratch,
-   * attachments — because only it can see the scratch store.
+   * The main process owns the root order —project, session scratch,
+   * attachments —because only it can see the scratch store.
    */
   fsResolveRef: (ref: string, sessionId?: string) =>
     invoke<FsChatRefResolveResult>(IPC.invoke.fsResolveRef, {
@@ -1465,9 +1478,6 @@ export const api = {
   /** Paired remote `pi-host` list, redacted so no device token reaches here. */
   listRemoteHosts: () =>
     invoke<{ hosts: RemoteHostSummary[] }>(IPC.invoke.remoteHostList),
-  /** Exchange `ppt1.` pairing token for a durable device token and connect. */
-  pairRemoteHost: (request: RemoteHostPairRequest) =>
-    invoke<RemoteHostPairResult>(IPC.invoke.remoteHostPair, request),
   /**
    * Install and pair a `pi-host` over SSH on a machine the user already
    * reaches, then bring it online (spec §5.2). Credentials come from the
@@ -1475,9 +1485,102 @@ export const api = {
    */
   bootstrapRemoteHost: (request: RemoteHostBootstrapRequest) =>
     invoke<RemoteHostBootstrapResult>(IPC.invoke.remoteHostBootstrap, request),
+  /** Exchange `ppt1.` pairing token for a durable device token and connect. */
+  pairRemoteHost: (request: RemoteHostPairRequest) =>
+    invoke<RemoteHostPairResult>(IPC.invoke.remoteHostPair, request),
   /** Close and drop a paired host by its stable routing key. */
   removeRemoteHost: (hostKey: string) =>
     invoke<{ ok: true }>(IPC.invoke.remoteHostRemove, { hostKey }),
+  /**
+   * List the directories under a remote path, for the remote folder picker.
+   * `path` is absolute on the remote machine and omitted means the host's
+   * browsable root. The host applies its own bounds, hidden-name filter, and
+   * entry cap, and this surface reports a refusal verbatim.
+   */
+  browseRemoteHost: (hostKey: string, path?: string) =>
+    invoke<{ path: string; parent?: string; entries: Array<{ name: string; path: string }> }>(
+      IPC.invoke.remoteHostBrowse,
+      { hostKey, ...(path ? { path } : {}) },
+    ),
+  /** Projects registered on one remote host, with the folders we remembered. */
+  listRemoteProjects: (hostKey?: string) =>
+    invoke<{ projects: RemoteProjectSummary[] }>(IPC.invoke.remoteHostProjectList, {
+      hostKey,
+    }),
+  /**
+   * Register a remote directory as a project on that host. The host
+   * canonicalizes and validates the path; the desktop then remembers the
+   * projection so the host stays listed while it is offline (ADR 0300).
+   */
+  registerRemoteProject: (input: {
+    hostKey: string;
+    path: string;
+    name?: string;
+  }) =>
+    invoke<{ project: RemoteProjectSummary }>(IPC.invoke.remoteHostProjectRegister, input),
+  /** Forget one remote project locally and on the host. */
+  removeRemoteProject: (id: string) =>
+    invoke<{ ok: true }>(IPC.invoke.remoteHostProjectRemove, { id }),
+  /** Sessions of one remote host; the merged session list uses this. */
+  listRemoteHostSessions: (hostKey: string) =>
+    invoke<{ sessions: RemoteHostSessionRow[] }>(IPC.invoke.remoteHostSessionList, {
+      hostKey,
+    }),
+  /**
+   * Create a session on a remote host under one of its projects. The
+   * returned id is the namespaced `remote:<hostKey>:<sessionId>` the
+   * renderer uses from then on; the transport is resolved in main.
+   */
+  createRemoteSession: (request: {
+    hostKey: string;
+    projectId: string;
+    title?: string;
+    mode?: string;
+    permissionMode?: string;
+    providerId?: string;
+    modelId?: string;
+    thinkingLevel?: string;
+  }) =>
+    invoke<{ session: RemoteHostSessionRow }>(IPC.invoke.remoteHostSessionCreate, request),
+  /**
+   * Open a terminal on a remote session. `terminalId` re-attaches to a shell
+   * that already exists —the host returns its replay ring instead of
+   * spawning a second one —which is what a reconnect after an SSH drop uses.
+   */
+  openRemoteTerminal: (input: {
+    sessionId: string;
+    cols: number;
+    rows: number;
+    terminalId?: string;
+  }) =>
+    invoke<{ terminalId: string; replay: string; cols: number; rows: number }>(
+      IPC.invoke.remoteTerminalOpen,
+      input,
+    ),
+  /** Keystrokes for an open remote terminal; base64 so no byte is lost. */
+  sendRemoteTerminalInput: (terminalId: string, data: string) =>
+    invoke<{ ok: true }>(IPC.invoke.remoteTerminalInput, { terminalId, data }),
+  resizeRemoteTerminal: (terminalId: string, cols: number, rows: number) =>
+    invoke<{ ok: true }>(IPC.invoke.remoteTerminalResize, { terminalId, cols, rows }),
+  closeRemoteTerminal: (terminalId: string) =>
+    invoke<{ ok: true }>(IPC.invoke.remoteTerminalClose, { terminalId }),
+  /** Subscribe to a remote terminal's output and exit. */
+  onRemoteTerminalEvent: (
+    onData: (payload: { terminalId: string; data: string }) => void,
+    onExit: (payload: { terminalId: string; code: number | null }) => void,
+  ) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    const offData = window.piDesktop.on(IPC.event.remoteTerminalData, (payload) =>
+      onData((payload ?? {}) as { terminalId: string; data: string }),
+    );
+    const offExit = window.piDesktop.on(IPC.event.remoteTerminalExit, (payload) =>
+      onExit((payload ?? {}) as { terminalId: string; code: number | null }),
+    );
+    return () => {
+      offData();
+      offExit();
+    };
+  },
   onSessionsChanged: (
     listener: (event: {
       reason?: string;

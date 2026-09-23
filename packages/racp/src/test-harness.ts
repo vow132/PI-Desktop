@@ -14,6 +14,8 @@ export class MemoryLink {
   /** Frames the server sent, for assertions. */
   readonly toClient: string[] = [];
   readonly toServer: string[] = [];
+  /** Close codes observed on this link, in order. */
+  readonly closeCodes: Array<{ code: number; reason: string }> = [];
 
   get isOpen(): boolean {
     return this.open;
@@ -58,6 +60,7 @@ export class MemoryLink {
   drop(code = 1006, reason = "dropped"): void {
     if (!this.open) return;
     this.open = false;
+    this.closeCodes.push({ code, reason });
     queueMicrotask(() => {
       this.serverHandlers.close?.();
       this.clientHandlers.close?.({ code, reason });

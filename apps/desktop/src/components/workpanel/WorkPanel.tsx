@@ -33,10 +33,12 @@ import {
   IconPanelRestore,
   IconPlug,
   IconPlus,
+  IconTerminal,
 } from "../icons";
 import { ReviewTab } from "./ReviewTab";
 import { FilesTab } from "./FilesTab";
 import { PluginViewTab } from "./PluginViewTab";
+import { RemoteTerminalTab } from "./RemoteTerminalTab";
 import { SubagentPanel } from "./SubagentPanel";
 import type { SubagentPanelSelection } from "../../lib/subagent-panel";
 import {
@@ -53,6 +55,7 @@ const TAB_ICONS = {
   new: IconPlus,
   review: IconDiff,
   file: IconFileText,
+  terminal: IconTerminal,
   plugin: IconPlug,
 } as const;
 
@@ -95,6 +98,7 @@ function tabLabel(
 function workPanelTools(
   t: (key: string) => string,
   pluginViews: PluginViewMeta[],
+  showRemoteTerminal: boolean,
 ): WorkPanelTool[] {
   // Review is the only host-owned launcher. Files, Browser, and every future
   // tool are plugin-contributed views, so their list stays data-driven.
@@ -105,6 +109,18 @@ function workPanelTools(
       label: t("panel.tabs.review"),
       icon: IconDiff,
     },
+    // The remote shell only exists inside a remote session, so its launcher
+    // entry is gated on one rather than offered where it cannot work.
+    ...(showRemoteTerminal
+      ? [
+          {
+            id: "terminal",
+            tab: toolWorkPanelTab("terminal"),
+            label: t("panel.tabs.terminal"),
+            icon: IconTerminal,
+          },
+        ]
+      : []),
     ...pluginViews.map((view) => {
       const Icon = pluginViewIcon(view.icon);
       return {
@@ -174,6 +190,14 @@ export function WorkPanel({
   const tabs = rawTabs.filter(isKnownWorkPanelTab);
   const activeTabId = useAppStore((s) => s.activeWorkPanelTabId);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const activeRemoteProjectId = useAppStore((s) => s.activeRemoteProjectId);
+  // A remote shell only exists inside a remote session, so both its launcher
+  // entry and the tab itself are gated on the active session's source.
+  const activeSessionIsRemote = useAppStore((state) => {
+    if (!state.activeSessionId) return false;
+    const session = state.sessions.find((candidate) => candidate.id === state.activeSessionId);
+    return session?.source === "remote";
+  });
   const pluginViews = useAppStore((s) => s.pluginViews);
   const width = useAppStore((s) => s.workPanelWidth);
   const activateTab = useAppStore((s) => s.activateWorkPanelTab);
@@ -183,7 +207,7 @@ export function WorkPanel({
   const replaceWorkPanelTab = useAppStore((s) => s.replaceWorkPanelTab);
   const setWidth = useAppStore((s) => s.setWorkPanelWidth);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
-  const tools = workPanelTools(t, pluginViews);
+  const tools = workPanelTools(t, pluginViews, activeSessionIsRemote);
 
   const [panelDragWidth, setPanelDragWidth] = useState<number | null>(null);
   const panelResizeState = useRef<WorkPanelResizeState | null>(null);
@@ -630,6 +654,18 @@ export function WorkPanel({
               <FilesTab />
             </div>
           )}
+          {!subagentPanel && activeTab?.kind === "terminal" && (
+            <div
+              key={activeTab.id}
+              id={`work-panel-surface-${activeTab.id}`}
+              className="work-panel-tabpane work-panel-tabpane-terminal"
+              role="tabpanel"
+              aria-labelledby={`work-panel-tab-${activeTab.id}`}
+            >
+              <RemoteTerminalTab />
+            </div>
+          )}
+
           {!subagentPanel &&
             activeTab?.kind === "plugin" &&
             (() => {
@@ -649,6 +685,7 @@ export function WorkPanel({
                     title={activeLabel}
                     icon={activePluginView?.icon}
                     sessionId={activeSessionId ?? undefined}
+                    remoteProjectId={activeRemoteProjectId ?? undefined}
                     location={activeTab.location}
                     // Native WebContentsViews composite above renderer content.
                     blocked={exiting || panelBlocked || blockingOverlayActive}

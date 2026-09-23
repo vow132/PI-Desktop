@@ -480,6 +480,15 @@ pub(crate) fn validate_contributions(root: &Path, manifest: &PluginManifest) -> 
             if !resolved.exists() {
                 bail!("PLUGIN_INVALID: view entry missing: {entry_path}");
             }
+            if let Some(files) = obj.get("workspaceFiles") {
+                let files = files.as_object().ok_or_else(|| anyhow!("PLUGIN_INVALID: view workspaceFiles must be an object"))?;
+                let prefix = files.get("channelPrefix").and_then(Value::as_str);
+                let valid_prefix = prefix.map(|value| value.len() > 0 && value.len() <= 32 && value.chars().enumerate().all(|(index, c)| (index == 0 && c.is_ascii_lowercase()) || (index > 0 && (c.is_ascii_alphanumeric() || c == '_' || c == '-')))).unwrap_or(false);
+                if files.get("version").and_then(Value::as_u64) != Some(1) || !valid_prefix || matches!(prefix, Some("workspace" | "fs" | "app" | "plugin" | "ui" | "clipboard" | "shell" | "net" | "browser" | "themes" | "models")) || files.keys().any(|key| key != "version" && key != "channelPrefix") {
+                    bail!("PLUGIN_INVALID: view workspaceFiles requires version 1 and a non-reserved channelPrefix");
+                }
+                require_permission(manifest, "workspace.remote.read", "remote workspace files")?;
+            }
         }
     }
 

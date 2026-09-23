@@ -44,6 +44,10 @@ const { sshHostRecord, sshMetadataOf, transportOf } = await import(
 );
 
 const TEST_TIMEOUT_MS = 20_000;
+const POSIX = {
+  timeout: TEST_TIMEOUT_MS,
+  skip: process.platform === "win32" && "requires POSIX shell and permission modes",
+};
 const PASSWORD = "correct horse battery staple";
 
 /** Reversible fake keychain: the prefix proves the value went through encrypt. */
@@ -65,7 +69,7 @@ function fakeEncryption(overrides = {}) {
 }
 
 async function tmpDir(t, prefix = "ssh-password-") {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
+  const dir = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), prefix));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -139,7 +143,7 @@ test("sshCommonArgs relaxes BatchMode only for a password target", () => {
   assert.equal(args.at(-1), "deploy@remote.example");
 });
 
-test("a password target reaches ssh through the askpass helper and nowhere else", { timeout: TEST_TIMEOUT_MS }, async (t) => {
+test("a password target reaches ssh through the askpass helper and nowhere else", POSIX, async (t) => {
   const binary = await writeFixture(t, FIXTURES.argvAndEnv, "ssh-askpass-probe");
   const transport = createSystemSshTransport(
     { host: "remote.example", user: "deploy", password: PASSWORD },
@@ -154,7 +158,7 @@ test("a password target reaches ssh through the askpass helper and nowhere else"
 
   // The secret is not an argument…
   for (const arg of argv) {
-    assert.equal(arg.includes(PASSWORD), false, `argv leaked the password: ${arg}`);
+    assert.equal(arg.includes(PASSWORD), false, "argv must not leak the password");
   }
   assert.equal(argv.at(-1), "id -u");
   assert.equal(argv.at(-2), "deploy@remote.example");
@@ -163,8 +167,8 @@ test("a password target reaches ssh through the askpass helper and nowhere else"
   assert.equal(read("HAS_ASKPASS"), "set");
   assert.equal(read("ASKPASS_REQUIRE"), "force");
   assert.notEqual(read("SECRET_FILE"), "unset");
-  assert.equal(read("HELPER_READS"), PASSWORD, "the helper returns the secret whole");
-  assert.equal(read("HELPER_RUNS"), PASSWORD, "ssh's own prompt is answered by the helper");
+  assert.equal(read("HELPER_READS") === PASSWORD, true, "the helper returns the secret whole");
+  assert.equal(read("HELPER_RUNS") === PASSWORD, true, "ssh's own prompt is answered by the helper");
   // The helper is executable only by its owner, and the secret only readable by
   // its owner. The modes are checked inside the child, because the material is
   // already deleted by the time this assertion runs — which is itself the next
@@ -178,7 +182,7 @@ test("a password target reaches ssh through the askpass helper and nowhere else"
   await assert.rejects(stat(secretPath));
 });
 
-test("a key-authenticated transport is handed no askpass material", { timeout: TEST_TIMEOUT_MS }, async (t) => {
+test("a key-authenticated transport is handed no askpass material", POSIX, async (t) => {
   const binary = await writeFixture(t, FIXTURES.argvAndEnv, "ssh-no-askpass");
   const transport = createSystemSshTransport({ host: "remote.example" }, { binary });
   t.after(() => transport.dispose());
@@ -196,7 +200,7 @@ test("a key-authenticated transport is handed no askpass material", { timeout: T
   assert.equal(read("HELPER_READS"), undefined);
 });
 
-test("each command gets its own credential, and none outlives it", { timeout: TEST_TIMEOUT_MS }, async (t) => {
+test("each command gets its own credential, and none outlives it", POSIX, async (t) => {
   const binary = await writeFixture(t, FIXTURES.argvAndEnv, "ssh-per-command-secret");
   const transport = createSystemSshTransport(
     { host: "remote.example", password: PASSWORD },
@@ -216,7 +220,7 @@ test("each command gets its own credential, and none outlives it", { timeout: TE
   await assert.rejects(stat(secondSecret));
 });
 
-test("dispose removes credential material that no child has reclaimed", { timeout: TEST_TIMEOUT_MS }, async (t) => {
+test("dispose removes credential material that no child has reclaimed", POSIX, async (t) => {
   const binary = await writeFixture(t, FIXTURES.argvAndEnv, "ssh-dispose-secret");
   const transport = createSystemSshTransport(
     { host: "remote.example", password: PASSWORD },
@@ -245,23 +249,33 @@ test("assertSshPassword refuses what OpenSSH could never receive", () => {
   // containing one would be silently truncated into a different password.
   assert.throws(() => assertSshPassword("two\nlines"), /line break/);
   assert.throws(() => assertSshPassword("two\rlines"), /line break/);
+  assert.throws(() => assertSshPassword("two\0parts"), (error) =>
+    error.errorCode === "INVALID_ARGUMENT" && /NUL/.test(error.message));
   assert.throws(() => assertSshPassword(""), /must not be empty/);
   assert.throws(() => assertSshPassword(null), /must be a string/);
   assert.throws(() => assertSshPassword("x".repeat(4097)), /at most/);
 });
 
-test("createSshAskpass refuses Windows instead of writing a helper that cannot run", async (t) => {
+test("createSshAskpass selects the native helper without changing its environment contract", async (t) => {
   const dir = await tmpDir(t);
-  await assert.rejects(
-    createSshAskpass(PASSWORD, { dir, platform: "win32" }),
-    (error) => error.errorCode === "HOST_BOOTSTRAP_FAILED" && /Windows/.test(error.message),
-  );
-  // Nothing may have been created on the way to that refusal.
-  const { readdir } = await import("node:fs/promises");
-  assert.deepEqual(await readdir(dir), []);
+  const material = await createSshAskpass(PASSWORD, { dir, platform: process.platform });
+  t.after(() => material.dispose());
+  const windows = process.platform === "win32";
+  if (windows) {
+    assert.match(material.env.SSH_ASKPASS, / --input-type=commonjs -e /);
+    assert.equal(material.env.SSH_ASKPASS.endsWith('" --'), true);
+    assert.equal(material.env.ELECTRON_RUN_AS_NODE, "1");
+    assert.equal(material.env.NODE_OPTIONS, "");
+    assert.equal(material.env.NODE_PATH, "");
+  } else {
+    assert.equal(material.env.SSH_ASKPASS.endsWith("askpass.sh"), true);
+  }
+  assert.equal(material.env.SSH_ASKPASS_REQUIRE, "force");
+  assert.equal(await readFile(material.env[ASKPASS_SECRET_ENV], "utf8") === `${PASSWORD}${windows ? "\n" : ""}`, true);
+  assert.equal(Object.values(material.env).some((value) => value.includes(PASSWORD)), false);
 });
 
-test("createSshAskpass writes a 0600 secret in a 0700 directory and cleans up", async (t) => {
+test("createSshAskpass writes a 0600 secret in a 0700 directory and cleans up", POSIX, async (t) => {
   const parent = await tmpDir(t);
   const material = await createSshAskpass(PASSWORD, { dir: parent });
   const secretPath = material.env[ASKPASS_SECRET_ENV];
@@ -269,7 +283,7 @@ test("createSshAskpass writes a 0600 secret in a 0700 directory and cleans up", 
   const root = dirname(secretPath);
 
   assert.equal(material.env.SSH_ASKPASS_REQUIRE, "force");
-  assert.equal(await readFile(secretPath, "utf8"), PASSWORD);
+  assert.equal(await readFile(secretPath, "utf8") === PASSWORD, true);
   assert.equal((await stat(secretPath)).mode & 0o777, 0o600);
   assert.equal((await stat(helperPath)).mode & 0o777, 0o700);
   assert.equal((await stat(root)).mode & 0o777, 0o700);

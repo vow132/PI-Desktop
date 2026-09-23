@@ -77,6 +77,22 @@ describe("RACP schemas", () => {
     expect(Value.Check(RacpInitializeResultSchema, initializeResult)).toBe(true);
   });
 
+  it("negotiates project files additively without changing wire version", () => {
+    const capabilities = { ...initializeResult.capabilities, projectFiles: { version: 1, read: true, write: true } };
+    expect(Value.Check(RacpInitializeResultSchema, { ...initializeResult, capabilities })).toBe(true);
+    expect(Value.Check(RacpInitializeResultSchema, { ...initializeResult, capabilities: { ...capabilities, projectFiles: { ...capabilities.projectFiles, version: 2 } } })).toBe(false);
+    for (const method of ["project/files/list", "project/files/read", "project/files/search"] as const) {
+      expect(rolesAllowOperation(["viewer"], method)).toBe(true);
+      expect(RACP_OPERATIONS[method].mutation).toBe(false);
+    }
+    for (const method of ["project/files/write", "project/files/create", "project/files/rename", "project/files/move"] as const) {
+      for (const role of ["viewer", "controller", "approver"] as const) expect(rolesAllowOperation([role], method)).toBe(false);
+      expect(rolesAllowOperation(["owner"], method)).toBe(true);
+      expect(RACP_OPERATIONS[method].mutation).toBe(true);
+    }
+    expect(RACP_SCHEMAS.ProjectFilesWriteInput).toBeDefined();
+  });
+
   it("rejects an initialization result that advertises an unknown binding", () => {
     const broken = {
       ...initializeResult,
@@ -141,9 +157,9 @@ describe("RACP schemas", () => {
     expect(Value.Check(RacpSessionSnapshotSchema, snapshot)).toBe(true);
   });
 
-  it("keeps every named schema in the generated fixture bundle", () => {
+  it("keeps every named schema in the generated fixture bundle", async () => {
     const bundle = JSON.stringify(RACP_SCHEMAS, null, 2) + "\n";
-    expect(bundle).toMatchFileSnapshot("../fixtures/racp.schema.json");
+    await expect(bundle).toMatchFileSnapshot("../fixtures/racp.schema.json");
   });
 });
 

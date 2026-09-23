@@ -64,8 +64,116 @@ export type RemoteHostSummary = {
   connected: boolean;
   /** Absent on records written before the SSH bootstrap existed → `direct`. */
   transport?: RemoteHostTransport;
+  /**
+   * What the paired host advertises in `connection/initialize`. Absent on a
+   * host that has never completed a handshake, and on summaries produced
+   * before capabilities were reported — both read as "nothing available".
+   */
+  capabilities?: RemoteHostCapabilities;
+  /** `pi-host` release version, or "" when the host did not report one. */
+  version?: string;
 };
 
+/**
+ * Feature flags one paired host reports. They come from the host's own
+ * capabilities (a `pi-host` without `node-pty` advertises `terminal: false`),
+ * so the desktop hides an affordance the host cannot serve instead of
+ * failing the call at click time.
+ */
+export type RemoteHostCapabilities = {
+  /** The host runs `terminal/*` on a real pty inside the session root. */
+  terminal: boolean;
+  /** The host serves `workspace/list` and `workspace/read` for its sessions. */
+  workspace: boolean;
+  /** The host accepts `tools/advertise` and issues `tool/execute` requests. */
+  toolRelay?: boolean;
+  /** Project-scoped file access; absent on older read-only remote hosts. */
+  projectFiles?: { version: 1; read: boolean; write: boolean };
+};
+
+/** One directory the host is willing to list. Directories only, by design. */
+export type RemoteDirectoryEntry = {
+  name: string;
+  /** Absolute path on the remote machine. */
+  path: string;
+};
+
+/**
+ * One page of a remote directory listing, as `project/browse` returns it. The
+ * host canonicalizes `path`, bounds the result, filters hidden entries, and
+ * omits `parent` at the browsable root.
+ */
+export type RemoteBrowseResult = {
+  /** Canonical absolute path that was listed. */
+  path: string;
+  /** Parent directory, absent at the browsable root. */
+  parent?: string;
+  entries: RemoteDirectoryEntry[];
+};
+
+/**
+ * A project registered on a remote host. The desktop keeps this projection
+ * locally (ADR 0303) so a host stays listed while it is offline;
+ * `hostProjectId` is the host's own row id.
+ */
+export type RemoteProjectSummary = {
+  /** Stable desktop-side id: `remote-project:<hostKey>:<hostProjectId>`. */
+  id: string;
+  hostKey: string;
+  hostProjectId: string;
+  /** Absolute path on the remote machine. */
+  path: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RemoteProjectRegisterRequest = {
+  hostKey: string;
+  /** Absolute path on the remote machine; the host canonicalizes it. */
+  path: string;
+  /** Optional display name; defaults to the host's directory name. */
+  name?: string;
+};
+
+/**
+ * Create a session on a remote host under one of its projects. `mode`,
+ * `permissionMode`, and the model binding mirror the local `sessionCreate`
+ * fields; the host owns whatever it does not accept.
+ */
+export type RemoteSessionCreateRequest = {
+  hostKey: string;
+  /** The host's own project id, from `remoteHostProjectList`. */
+  projectId: string;
+  title?: string;
+  mode?: string;
+  permissionMode?: string;
+  providerId?: string;
+  modelId?: string;
+  thinkingLevel?: string;
+};
+
+/**
+ * One session of a remote host, in the shape the desktop's session list
+ * renders. `id` is the namespaced `remote:<hostKey>:<sessionId>` the renderer
+ * echoes back on every call; the transport is resolved in Electron main, so
+ * the renderer never parses it. `projectPath` is absolute **on the remote
+ * machine** — it is what the work panel's file tree, review, and terminal
+ * operate on for this session.
+ */
+export type RemoteHostSessionRow = {
+  id: string;
+  hostKey: string;
+  source: "remote";
+  /** Opaque desktop project identity, never inferred from its path. */
+  remoteProjectId?: string;
+  title: string;
+  projectPath: string;
+  mode: string;
+  permissionMode: string;
+  updatedAt: string;
+  createdAt: string;
+};
 /**
  * Input for `remoteHostPair`. The pairing token is single-use and expiring
  * (spec §3.4); the desktop uses it once on the upgrade to call

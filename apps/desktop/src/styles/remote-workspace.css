@@ -1,0 +1,747 @@
+﻿/* Remote workspace: the project source menu and the connection wizard. Both
+   borrow the create-project dialog's tonal surfaces so the two read as one
+   flow rather than a second settings-like surface. */
+
+.project-source-menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  min-width: 200px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: var(--radius-lg-plus);
+  background: var(--ds-bg-elevated-opaque);
+  box-shadow: var(--ds-shadow-dialog);
+}
+
+.project-source-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ds-text-primary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+  text-align: start;
+}
+
+.project-source-menu button:hover,
+.project-source-menu button:focus-visible {
+  background: var(--ds-tile);
+  color: var(--ds-text-primary);
+}
+
+.remote-wizard-overlay {
+  padding: 24px;
+}
+
+.remote-wizard {
+  display: flex;
+  width: min(100%, 560px);
+  max-height: min(720px, calc(100vh - 48px));
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden auto;
+  border: 0;
+  border-radius: var(--radius-lg-plus);
+  background: var(--ds-bg-elevated-opaque);
+  box-shadow: var(--ds-shadow-dialog);
+  padding: 18px;
+}
+
+.remote-wizard.has-rail {
+  display: grid;
+  width: min(100%, 880px);
+  max-height: min(760px, calc(100vh - 48px));
+  grid-template-columns: 212px minmax(0, 1fr);
+  padding: 0;
+}
+
+.remote-wizard-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 14px;
+  border-radius: var(--radius-lg-plus) 0 0 var(--radius-lg-plus);
+  background: var(--ds-tile);
+}
+
+.remote-wizard-rail-title {
+  margin: 0;
+  padding: 0 10px;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.remote-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  color: var(--ds-text-muted);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-step.is-active {
+  background: var(--ds-bg-elevated-opaque);
+  color: var(--ds-text-primary);
+}
+
+.remote-wizard-step.is-done {
+  color: var(--ds-text-secondary);
+}
+
+.remote-wizard-step-marker {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--ds-tile);
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+}
+
+.remote-wizard-step.is-active .remote-wizard-step-marker {
+  background: var(--ds-accent);
+  color: var(--ds-bg-primary);
+}
+
+.remote-wizard-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 20px 22px;
+}
+
+.remote-wizard-subtitle {
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-normal);
+}
+
+.remote-wizard-methods {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.remote-wizard-method {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--ds-tile);
+  color: var(--ds-text-primary);
+  text-align: start;
+}
+
+.remote-wizard-method.is-active {
+  border-color: var(--ds-accent);
+  cursor: pointer;
+}
+
+.remote-wizard-method.is-unavailable {
+  opacity: 0.55;
+}
+
+.remote-wizard-method-name {
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-method-desc {
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-method-note {
+  color: var(--ds-text-secondary);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-method-mark {
+  font-size: var(--text-md-plus);
+}
+
+.remote-wizard-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.remote-wizard-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-wizard-field.is-wide {
+  grid-column: 1 / -1;
+}
+
+.remote-wizard-label {
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-hint {
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-normal);
+}
+
+.remote-wizard-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-wizard-auth-options {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--ds-tile);
+}
+
+.remote-wizard-auth-option {
+  padding: 7px 16px;
+  border: 0;
+  border-radius: var(--radius-sm, var(--radius-md));
+  background: transparent;
+  color: var(--ds-text-muted);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+}
+
+.remote-wizard-auth-option.is-active {
+  background: var(--ds-bg-elevated-opaque);
+  color: var(--ds-text-primary);
+}
+
+.remote-wizard-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-progress .is-running {
+  color: var(--ds-accent);
+}
+
+.remote-wizard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote-wizard-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ds-text-primary);
+  font-size: var(--text-lg);
+  font-weight: var(--font-weight-strong);
+  letter-spacing: var(--tracking-tight);
+}
+
+.remote-wizard-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.remote-wizard-section-title {
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-hosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.remote-wizard-host {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--ds-tile);
+  color: var(--ds-text-primary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+}
+
+.remote-wizard-host.is-active {
+  border-color: var(--ds-accent);
+}
+
+.remote-wizard-host-status {
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+}
+
+.remote-wizard-host-status.is-online {
+  color: var(--ds-accent);
+}
+
+.remote-wizard-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.remote-wizard-up-icon {
+  transform: rotate(-90deg);
+}
+
+.remote-wizard-path {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--ds-text-primary);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-wizard-list {
+  display: flex;
+  max-height: 260px;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.remote-wizard-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ds-text-primary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+  text-align: start;
+}
+
+.remote-wizard-row:hover,
+.remote-wizard-row:focus-visible {
+  background: var(--ds-tile);
+}
+
+.remote-wizard-row.is-active {
+  background: var(--ds-tile);
+  color: var(--ds-text-primary);
+}
+
+.remote-wizard-row.is-loading,
+.remote-wizard-row.is-empty {
+  color: var(--ds-text-muted);
+  cursor: default;
+}
+
+.remote-wizard-error {
+  margin: 0;
+  color: var(--ds-error);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-wizard-name {
+  width: 100%;
+}
+
+.remote-wizard-empty {
+  padding: 24px 0;
+  color: var(--ds-text-muted);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-relaxed);
+}
+
+.remote-wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.remote-wizard-submit {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--ds-accent);
+  /* The design system has no `--ds-accent-foreground`; the on-accent ink is */
+  /* `--ds-bg-primary` (see `.btn-primary` in ui-kit.css). Using a token that */
+  /* does not exist makes `color` fall back to an inherited value, which on an */
+  /* accent-filled button renders as ink the same colour as the fill. */
+  color: var(--ds-bg-primary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+}
+
+.remote-wizard-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.remote-wizard-ghost {
+  padding: 8px 14px;
+  /* The design system has no single hairline-width token; a ghost button here */
+  /* uses the same literal every other outlined control uses (ui-kit.css). */
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+}
+
+.remote-wizard-ghost:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.remote-wizard-primary {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--ds-accent);
+  color: var(--ds-bg-primary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+}
+
+.remote-wizard-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.remote-wizard-note {
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-normal);
+}
+
+.remote-wizard-paired {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-wizard-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.remote-wizard-host {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ds-text-primary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+  text-align: start;
+}
+
+.remote-wizard-host:hover,
+.remote-wizard-host:focus-visible {
+  background: var(--ds-tile);
+}
+
+.remote-wizard-host-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-wizard-empty {
+  padding: 24px 0;
+  color: var(--ds-text-muted);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-relaxed);
+}
+
+/* --- Remote terminal tab ---------------------------------------------------
+   xterm ships its own stylesheet; these rules own only the chrome around it.
+   The surface must fill the pane because FitAddon derives the shell's column
+   and row count from the container's box. */
+
+.work-panel-tabpane-terminal {
+  padding: 0;
+  overflow: hidden;
+}
+
+.remote-terminal {
+  position: relative;
+  height: 100%;
+  background: var(--ds-bg-inset);
+}
+
+.remote-terminal-surface {
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+/* Opening, failure, and exit all cover the surface, so the shell is never
+   mistaken for a working one while it is not. */
+.remote-terminal-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--ds-modal-veil);
+  text-align: center;
+}
+
+.remote-terminal-hint {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-md-plus);
+  line-height: var(--leading-compact);
+}
+
+.remote-terminal-error {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--ds-error);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+  overflow-wrap: anywhere;
+}
+
+.remote-terminal-retry {
+  padding: 7px 14px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--ds-tile);
+  color: var(--ds-text-primary);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-compact);
+  cursor: pointer;
+}
+
+.remote-terminal-retry:hover {
+  background: var(--ds-tile-hover);
+}
+
+/* Registered remote workspaces stay in the Projects section without entering
+   local workspace.path. The row is intentionally compact like local groups,
+   while host/status/path make the remote identity explicit. */
+.remote-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px 6px;
+}
+
+.remote-project-group {
+  min-width: 0;
+}
+
+.remote-project-row {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--ds-text-secondary);
+}
+
+.remote-project-row.is-active {
+  background: var(--ds-tile-deep);
+  color: var(--ds-text-primary);
+}
+
+.remote-project-action {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ds-text-muted);
+  cursor: pointer;
+}
+
+.remote-project-action:hover:not(:disabled),
+.remote-project-action:focus-visible {
+  background: var(--ds-tile-hover);
+  color: var(--ds-text-primary);
+}
+
+.remote-project-disclosure {
+  display: grid;
+  place-items: center;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.remote-project-disclosure.is-open {
+  transform: rotate(90deg);
+}
+
+.remote-project-select {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.remote-project-select:hover,
+.remote-project-select:focus-visible {
+  color: var(--ds-text-primary);
+}
+
+.remote-project-label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.remote-project-name,
+.remote-project-meta,
+.remote-project-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-project-name {
+  color: var(--ds-text-primary);
+  font-size: var(--text-sm-plus);
+  font-weight: var(--font-weight-medium);
+}
+
+.remote-project-meta,
+.remote-project-path {
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+}
+
+.remote-project-path {
+  color: var(--ds-text-faint);
+  font-family: var(--font-mono);
+}
+
+.remote-project-sessions {
+  margin: 0 0 4px 30px;
+  padding: 0;
+  list-style: none;
+}
+
+.remote-project-session {
+  width: 100%;
+  overflow: hidden;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-xs-plus);
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.remote-project-session:hover,
+.remote-project-session.is-active {
+  background: var(--ds-tile-hover);
+  color: var(--ds-text-primary);
+}
+
+.remote-project-empty,
+.remote-project-error {
+  padding: 4px 8px;
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+}
+
+.remote-project-error {
+  color: var(--ds-error);
+}
+
+.remote-project-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

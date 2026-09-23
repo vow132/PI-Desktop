@@ -29,11 +29,12 @@
         "title": { "en": "File Manager", "zh-CN": "文件管理器" },
         "icon": "folder",
         "entry": "views/index.html",
-        "order": 40
+        "order": 40,
+        "workspaceFiles": { "version": 1, "channelPrefix": "fm" }
       }
     ]
   },
-  "permissions": ["ui.view", "fs.read"],
+  "permissions": ["ui.view", "fs.read", "workspace.remote.read", "workspace.remote.write"],
   "fs": {
     "read": {
       "root": "workspace",

@@ -233,7 +233,7 @@ test("work panel header exposes a scrollable tab strip and direct new-page actio
   assert.match(panelSource, /aria-controls=\{`work-panel-surface-\$\{tab\.id\}`\}/);
   assert.match(panelSource, /className="work-panel-tab-close"/);
   assert.match(panelSource, /event\.button !== 1/);
-  assert.match(panelSource, /workPanelTools\(t, pluginViews\)/);
+  assert.match(panelSource, /workPanelTools\(t, pluginViews, activeSessionIsRemote\)/);
   assert.match(panelSource, /toolWorkPanelTab\("review"\)/);
   assert.match(panelSource, /pluginViews\.map\(\(view\) =>/);
   assert.doesNotMatch(panelSource, /HEADER_TOOLS|headerToolTab|HeaderToolKind/);
@@ -445,14 +445,21 @@ test("Electron enforces the responsive shell minimum", () => {
   assert.match(mainSource, /initialMinHeight = Math\.min\(windowMinHeight/);
 });
 
-test("built-in terminal is absent while the work panel keeps its other surfaces", () => {
-  assert.doesNotMatch(panelSource, /TerminalTab|terminalOpen|kind: "terminal"/);
-  assert.doesNotMatch(panelSource, /work-panel-surface-terminal|activeTab\?\.kind !== "terminal"/);
+test("a local built-in terminal stays absent while the remote shell ships its own tab", () => {
+  // Still no local pty surface: the transcript hands interactive shell work to
+  // the user's external terminal, exactly as ADR 0108 decided.
+  assert.doesNotMatch(panelSource, /terminalOpen|work-panel-surface-terminal/);
+  assert.doesNotMatch(panelSource, /activeTab\?\.kind !== "terminal"/);
+  assert.match(transcriptSource, /action === "run"/);
+  assert.doesNotMatch(transcriptSource, /openTerminal|terminalArtifact|chat\.openTerminal/);
+  // The remote shell is the one exception and it is reachable only from a
+  // remote session (ADR 0303); a local session never gets the entry.
+  assert.match(panelSource, /activeTab\?\.kind === "terminal" && \(/);
+  assert.match(panelSource, /activeSessionIsRemote/);
+  assert.match(panelSource, /session\?\.source === "remote"/);
   assert.match(panelSource, /activeTab\?\.kind === "review"/);
   assert.match(panelSource, /activeTab\?\.kind === "plugin"/);
   assert.match(panelSource, /activeTab\?\.kind === "file"/);
-  assert.match(transcriptSource, /action === "run"/);
-  assert.doesNotMatch(transcriptSource, /openTerminal|terminalArtifact|chat\.openTerminal/);
 });
 
 test("tool results never open the Review tab on their own", () => {

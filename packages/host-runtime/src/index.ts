@@ -12,3 +12,4 @@ export * from "./runtime-service.js";
 export * from "./plan-dispatch.js";
 export * from "./workspace-files.js";
 export * from "./workspace-diff.js";
+export * from "./project-files.js";

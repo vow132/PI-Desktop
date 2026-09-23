@@ -15,6 +15,7 @@ import Type from "typebox";
 
 import { ErrorCodes } from "./errors.js";
 import type { AgentEvent } from "./types.js";
+import { PROJECT_FILES_INPUT_SCHEMAS, ProjectFileEntrySchema, ProjectFilesListResultSchema, ProjectFilesReadResultSchema, ProjectFilesSearchResultSchema, ProjectFilesWriteResultSchema, ProjectFilesEntryResultSchema } from "./project-files.js";
 
 type Static<T extends Type.TSchema> = Type.Static<T>;
 
@@ -419,6 +420,8 @@ export const RacpServerCapabilitiesSchema = Type.Object({
   toolRelay: Type.Boolean(),
   terminal: Type.Boolean(),
   notifications: Type.Boolean(),
+  /** Absent on older Hosts. Clients must negotiate before project-file access. */
+  projectFiles: Type.Optional(Type.Object({ version: Type.Literal(1), read: Type.Boolean(), write: Type.Boolean() })),
   bindings: Type.Array(Type.Union([Type.Literal("RACP-WS"), Type.Literal("RACP-HTTP"), Type.Literal("RACP-GRPC")])),
 });
 export type RacpServerCapabilities = Static<typeof RacpServerCapabilitiesSchema>;
@@ -524,6 +527,13 @@ export const RACP_OPERATIONS = {
   "connection/ping": { role: "authenticated", profile: "v1", mutation: false },
   "host/list": { role: "authenticated", profile: "v1", mutation: false },
   "project/list": { role: "viewer", profile: "v1", mutation: false },
+  "project/files/list": { role: "viewer", profile: "remote-host", mutation: false },
+  "project/files/read": { role: "viewer", profile: "remote-host", mutation: false },
+  "project/files/search": { role: "viewer", profile: "remote-host", mutation: false },
+  "project/files/write": { role: "owner", profile: "remote-host", mutation: true },
+  "project/files/create": { role: "owner", profile: "remote-host", mutation: true },
+  "project/files/rename": { role: "owner", profile: "remote-host", mutation: true },
+  "project/files/move": { role: "owner", profile: "remote-host", mutation: true },
   "session/list": { role: "viewer", profile: "v1", mutation: false },
   "session/get": { role: "viewer", profile: "v1", mutation: false },
   "session/create": { role: "controller", profile: "v1", mutation: true },
@@ -843,6 +853,19 @@ export const RACP_SCHEMAS = {
   Attachment: RacpAttachmentSchema,
   HostSummary: RacpHostSummarySchema,
   ProjectSummary: RacpProjectSummarySchema,
+  ProjectFileEntry: ProjectFileEntrySchema,
+  ProjectFilesListInput: PROJECT_FILES_INPUT_SCHEMAS.list,
+  ProjectFilesReadInput: PROJECT_FILES_INPUT_SCHEMAS.read,
+  ProjectFilesSearchInput: PROJECT_FILES_INPUT_SCHEMAS.search,
+  ProjectFilesWriteInput: PROJECT_FILES_INPUT_SCHEMAS.write,
+  ProjectFilesCreateInput: PROJECT_FILES_INPUT_SCHEMAS.create,
+  ProjectFilesRenameInput: PROJECT_FILES_INPUT_SCHEMAS.rename,
+  ProjectFilesMoveInput: PROJECT_FILES_INPUT_SCHEMAS.move,
+  ProjectFilesListResult: ProjectFilesListResultSchema,
+  ProjectFilesReadResult: ProjectFilesReadResultSchema,
+  ProjectFilesSearchResult: ProjectFilesSearchResultSchema,
+  ProjectFilesWriteResult: ProjectFilesWriteResultSchema,
+  ProjectFilesEntryResult: ProjectFilesEntryResultSchema,
   InitializeParams: RacpInitializeParamsSchema,
   InitializeResult: RacpInitializeResultSchema,
   RemoteError: RacpRemoteErrorSchema,

@@ -221,6 +221,8 @@ export function createProjectSlice({
   | "cloneProject"
   | "openProject"
   | "closeProjectDialog"
+  | "openProjectSourceMenu"
+  | "closeProjectSourceMenu"
   | "createProjectFromFolders"
   | "createProjectFromGit"
   | "clearProject"
@@ -262,8 +264,8 @@ export function createProjectSlice({
         : null;
       if (!workspace?.path) return null;
       if (
-        normalizeProjectPath(get().activeProjectPath) !==
-          normalizeProjectPath(workspace.path) &&
+        (get().activeRemoteProjectId || normalizeProjectPath(get().activeProjectPath) !==
+          normalizeProjectPath(workspace.path)) &&
         !preserveConversation
       ) {
         get().resetWorkPanelContext();
@@ -271,7 +273,7 @@ export function createProjectSlice({
 
       set((state) => {
         const switchesVisibleProject =
-          normalizeProjectPath(state.activeProjectPath) !==
+          Boolean(state.activeRemoteProjectId) || normalizeProjectPath(state.activeProjectPath) !==
           normalizeProjectPath(workspace.path);
         const openProjectPaths = promoteProjectPath(
           state.openProjectPaths,
@@ -281,6 +283,7 @@ export function createProjectSlice({
         return {
           workspace,
           activeProjectPath: workspace.path,
+          activeRemoteProjectId: null,
           openProjectPaths,
           openProjects,
           page: "chat" as const,
@@ -377,6 +380,13 @@ export function createProjectSlice({
     closeProjectDialog: () => {
       set({ createProjectDialogOpen: false });
     },
+    /**
+     * The project section's source menu (打开文件夹 / 远程连接). Its open
+     * state lives here beside the dialog it sits above so both close
+     * together when the user navigates away.
+     */
+    openProjectSourceMenu: () => set({ projectSourceMenuOpen: true }),
+    closeProjectSourceMenu: () => set({ projectSourceMenuOpen: false }),
     createProjectFromFolders: async ({ name, folders, primaryPath }) =>
       createNamedProjectGroup(
         { get, set, runtime },
@@ -401,6 +411,7 @@ export function createProjectSlice({
       set({
         workspace: null,
         activeProjectPath: undefined,
+        activeRemoteProjectId: null,
         ...(preserveConversation
           ? {}
           : {
@@ -421,7 +432,7 @@ export function createProjectSlice({
       if (!key) return;
       const removedSessionIds = get()
         .sessions.filter(
-          (session) => normalizeProjectPath(session.projectPath) === key,
+          (session) => session.source !== "remote" && normalizeProjectPath(session.projectPath) === key,
         )
         .map((session) => session.id);
       // A path the host has no durable row for is not a failure: the local

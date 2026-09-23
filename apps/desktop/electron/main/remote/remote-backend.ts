@@ -19,6 +19,9 @@ import type {
   AgentStatus,
   AgentStopResponse,
   AskToolResolution,
+  FsEntry,
+  FsImageDataUrlResult,
+  FsReadResult,
   PlanResolutionResult,
   PlanResolveRequest,
   QueuedTurnSummary,
@@ -30,6 +33,7 @@ import type {
   SessionDetail,
   SessionSummary,
   ToolPermissionResolution,
+  WorkspaceDiff,
 } from "@pi-desktop/shared";
 import type { RemoteBackend } from "./backend-router.js";
 import {
@@ -61,7 +65,19 @@ function capabilityUnavailable(message: string): Error {
   });
 }
 
-/** The channels a remote host serves; every other channel stays local. */
+/**
+ * The channels a remote host serves; every other channel stays local.
+ *
+ * The first block is the remote-host profile's session/turn surface. The
+ * second is the workspace surface: `fsList`, `fsRead`, `fsReadImageDataUrl`,
+ * and `workspaceDiff` all name the session whose root they read, so they
+ * route by `sessionId` and land here for a remote session. `fsReveal`,
+ * `fsOpen`, and `fsIndex` are deliberately absent — they act on *this*
+ * machine's shell or index, which a remote path cannot describe, and
+ * {@link createRemoteBackend} answers them with `CAPABILITY_UNAVAILABLE`
+ * instead of letting them silently fall through to a local handler that
+ * would report a path the user never chose.
+ */
 const HANDLED_CHANNELS: ReadonlySet<string> = new Set([
   IPC.invoke.agentPrompt,
   IPC.invoke.agentQueuePush,
@@ -80,6 +96,21 @@ const HANDLED_CHANNELS: ReadonlySet<string> = new Set([
   IPC.invoke.askToolResolve,
   IPC.invoke.plansResolve,
   IPC.invoke.plansPending,
+  IPC.invoke.fsList,
+  IPC.invoke.fsRead,
+  IPC.invoke.fsReadImageDataUrl,
+  IPC.invoke.workspaceDiff,
+]);
+
+/**
+ * Channels the desktop offers locally that a remote host can never serve.
+ * They are named so the user reads a real reason instead of a local handler
+ * answering for a remote path.
+ */
+const REFUSED_CHANNELS: ReadonlySet<string> = new Set([
+  IPC.invoke.fsReveal,
+  IPC.invoke.fsOpen,
+  IPC.invoke.fsIndex,
 ]);
 
 export function createRemoteBackend(options: RemoteBackendOptions): RemoteBackend {
@@ -354,6 +385,71 @@ export function createRemoteBackend(options: RemoteBackendOptions): RemoteBacken
         // Pending plan cards are restored from the attach snapshot's approvals by
         // the event bridge, so this on-demand fetch stays empty for remote hosts.
         return { plans: [] };
+      case IPC.invoke.fsList: {
+        // The remote path is an absolute path *on the host*, so it is passed
+        // through as the host's own relative-to-root spelling and the host
+        // resolves it inside the session root (`workspace/list`).
+        const input = (args[0] ?? {}) as { path?: string };
+        const { entries } = await client.request<{ entries: FsEntry[] }>("workspace/list", {
+          sessionId: hostIdFor(args),
+          path: String(input.path ?? ""),
+        });
+        return { entries };
+      }
+      case IPC.invoke.fsRead: {
+        const input = (args[0] ?? {}) as { path?: string; mimeType?: string };
+        return client.request<FsReadResult>("workspace/read", {
+          sessionId: hostIdFor(args),
+          path: String(input.path ?? ""),
+          ...(input.mimeType ? { mimeType: input.mimeType } : {}),
+        });
+      }
+      case IPC.invoke.fsReadImageDataUrl: {
+        // `workspace/read` has no image-only mode: the host returns the same
+        // bounded `FsReadResult` it returns for a text read, which already
+        // enforces the 5 MB image cap and carries a `data:…;base64,` URL for
+        // an image. The renderer's `FsImageDataUrlResult` is derived from it
+        // here, with the same vocabulary the local `readOpenableImage` uses.
+        const input = (args[0] ?? {}) as { ref?: string; mimeType?: string };
+        const result = await client.request<FsReadResult>("workspace/read", {
+          sessionId: hostIdFor(args),
+          path: String(input.ref ?? ""),
+          ...(input.mimeType ? { mimeType: input.mimeType } : {}),
+        });
+        if (result.kind === "image" && result.dataUrl) {
+          return {
+            kind: "image",
+            dataUrl: result.dataUrl,
+            size: result.size,
+          } satisfies FsImageDataUrlResult;
+        }
+        if (result.kind === "tooLarge") {
+          return {
+            kind: "tooLarge",
+            size: result.size,
+            errorCode: "IMAGE_TOO_LARGE",
+          } satisfies FsImageDataUrlResult;
+        }
+        return {
+          kind: "notImage",
+          size: result.size,
+          errorCode: "NOT_AN_IMAGE",
+        } satisfies FsImageDataUrlResult;
+      }
+      case IPC.invoke.workspaceDiff:
+        return client.request<WorkspaceDiff>("workspace/diff", {
+          sessionId: hostIdFor(args),
+        });
+      case IPC.invoke.fsReveal:
+      case IPC.invoke.fsOpen:
+      case IPC.invoke.fsIndex:
+        // Local-only affordances: they act on this machine's shell, editor, or
+        // index. Answering a remote path locally would point the user at a
+        // file on the wrong machine, so they fail with a typed capability
+        // error the surface can explain.
+        throw capabilityUnavailable(
+          `${channel} is not available for a remote session`,
+        );
       default:
         throw Object.assign(new Error(`remote backend has no handler for ${channel}`), {
           errorCode: ErrorCodes.INTERNAL,
@@ -362,7 +458,8 @@ export function createRemoteBackend(options: RemoteBackendOptions): RemoteBacken
   };
 
   return {
-    handles: (channel: string) => HANDLED_CHANNELS.has(channel),
+    handles: (channel: string) =>
+      HANDLED_CHANNELS.has(channel) || REFUSED_CHANNELS.has(channel),
     invoke,
   };
 }

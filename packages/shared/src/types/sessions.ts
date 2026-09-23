@@ -27,6 +27,9 @@ export type SessionSummary = {
   id: string;
   /** Transcript authority. Omitted by older hosts and normalized to `desktop`. */
   source?: SessionSource;
+  /** Routing metadata supplied by Main for remote sessions only. */
+  hostKey?: string;
+  remoteProjectId?: string;
   /** Native sessions expose only safe actions in the first continuation slice. */
   capabilities?: SessionCapabilities;
   /** Stable machine-readable reason why a native session cannot be continued. */

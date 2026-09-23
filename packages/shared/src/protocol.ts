@@ -187,6 +187,39 @@ export const IPC = {
      * crosses this channel.
      */
     remoteHostBootstrap: "pi-desktop/remoteHost/bootstrap",
+    /**
+     * List the directories under a remote path, for the remote folder
+     * picker. `path` is absolute on the remote machine and omitted means the
+     * host's browsable root. Forwarded as the owner-only `project/browse`
+     * (spec §6.2), so the host's own bounds, hidden-name filter, and entry
+     * cap decide what comes back.
+     */
+    remoteHostBrowse: "pi-desktop/remoteHost/browse",
+    /** Every project registered on one remote host. */
+    remoteHostProjectList: "pi-desktop/remoteHost/project/list",
+    /**
+     * Register a remote directory as a project on that host. The host
+     * canonicalizes and validates the path; the desktop then remembers the
+     * projection so the host stays listed while offline (ADR 0300).
+     */
+    remoteHostProjectRegister: "pi-desktop/remoteHost/project/register",
+    /** Forget one remote project locally and on the host. */
+    remoteHostProjectRemove: "pi-desktop/remoteHost/project/remove",
+    /** Sessions of one remote host, for the merged session list. */
+    remoteHostSessionList: "pi-desktop/remoteHost/session/list",
+    /** Create a session on a remote host under one of its projects. */
+    remoteHostSessionCreate: "pi-desktop/remoteHost/session/create",
+    /**
+     * Open a terminal on a remote session. The pty runs on the remote
+     * machine inside that session's root (spec §6.2); the returned id is
+     * re-attached, never rebuilt, after a transport drop.
+     */
+    remoteTerminalOpen: "pi-desktop/remoteTerminal/open",
+    /** Keystrokes for an open remote terminal, base64 encoded. */
+    remoteTerminalInput: "pi-desktop/remoteTerminal/input",
+    /** New remote terminal geometry after a renderer-side resize. */
+    remoteTerminalResize: "pi-desktop/remoteTerminal/resize",
+    remoteTerminalClose: "pi-desktop/remoteTerminal/close",
     providersList: "pi-desktop/providers/list",
     providersReorder: "pi-desktop/providers/reorder",
     providersCreate: "pi-desktop/providers/create",
@@ -364,6 +397,14 @@ export const IPC = {
     providersOauth: "pi-desktop/providers/oauth/event",
     mcpOauth: "pi-desktop/mcp/oauth/event",
     updatesState: "pi-desktop/updates/event/state",
+    /**
+     * Remote terminal output for one open terminal. Payload carries the
+     * host-scoped `terminalId` plus base64 bytes, so the renderer never
+     * learns which host or session produced them.
+     */
+    remoteTerminalData: "pi-desktop/remoteTerminal/event/data",
+    /** A remote terminal's shell exited; `code` is null when it was killed. */
+    remoteTerminalExit: "pi-desktop/remoteTerminal/event/exit",
   },
 } as const;
 

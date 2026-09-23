@@ -89,8 +89,21 @@ export class RacpConnection {
 
   send(message: JsonRpcMessage): void {
     if (this.closed) return;
+    const frame = encodeFrame(message);
+    if (Buffer.byteLength(frame, "utf8") > this.server.limits.maxFrameBytes) {
+      // An oversized reply is not a message the peer can consume; framing it out
+      // would let one response become a resource-exhaustion vector.
+      this.server.log("warn", "racp outgoing frame exceeds maxFrameBytes; closing connection", {
+        connectionId: this.id,
+        bytes: Buffer.byteLength(frame, "utf8"),
+        limit: this.server.limits.maxFrameBytes,
+        method: "method" in message ? message.method : undefined,
+      });
+      this.close(1009, "PAYLOAD_TOO_LARGE");
+      return;
+    }
     try {
-      this.transport.send(encodeFrame(message));
+      this.transport.send(frame);
     } catch (error) {
       this.server.log("warn", "racp send failed", { connectionId: this.id, error: String(error) });
     }
@@ -179,6 +192,7 @@ export class RacpServer {
       toolRelay: false,
       terminal: Boolean(options.operations.terminal),
       notifications: false,
+      ...(options.operations.files ? { projectFiles: { version: 1 as const, read: true, write: true } } : {}),
       bindings: ["RACP-WS"],
     };
     this.handlers = createOperations();
